@@ -7,12 +7,14 @@ standings after the daily deadline.
 
 The implementation plan and decisions are in [PLAN.md](PLAN.md).
 
-## Run the existing project in WSL2
+## Run locally (macOS or Linux/WSL2)
 
-The project and its Python virtual environment are already at:
+Use Python 3.12 or newer. On this Mac, the checkout is at
+`~/dev/Daily-Podium` and `.venv` uses Homebrew Python 3.13. The macOS system
+`python3` may be older; use the project's virtual environment for this app.
 
 ```sh
-cd /home/stefan/dev/daily-games-bot
+cd ~/dev/Daily-Podium
 source .venv/bin/activate
 cp -n .env.example .env
 nano .env
@@ -30,12 +32,13 @@ Start the bot:
 python -m daily_games
 ```
 
-Keep this terminal running. Test through the normal Windows Discord app; the Python bot
-stays in WSL2. No localhost website, Windows Python environment, port forwarding, tunnel,
+Keep this terminal running. Test through the Discord desktop app or browser; the Python bot
+runs locally on your computer. No localhost website, port forwarding, tunnel,
 or game account credentials are needed. Your computer must stay awake for live operation.
 Stop with Ctrl+C. Restarts preserve settings, scores, and daily boards.
 
-For a fresh checkout, use Python 3.12+ and create a new virtual environment:
+For a fresh checkout, create a virtual environment with Python 3.12+ (on macOS with
+Homebrew Python 3.13, use `python3.13` in place of `python3` below):
 
 ```sh
 python3 -m venv .venv
@@ -46,6 +49,11 @@ python -m pip install -e . --no-deps
 
 The lock file includes development tools. To resolve newer compatible versions instead,
 install `python -m pip install -e '.[dev]'` and rerun the tests.
+
+The environment and `.env` are local to this checkout; Git does not copy them when
+cloning. Keep any existing WSL bot process stopped while testing this copy: only one
+deployment should run with the same bot token. Existing scores/settings are in the
+old deployment's SQLite database, not in Git; a fresh clone starts with no server setup.
 
 ## Discord application setup
 
@@ -104,7 +112,7 @@ in each server's results channel to compete there; results do not automatically 
 | `/help` | `!help` | Instructions |
 | `/games` | `!games` | Links to the three games |
 | `/leaderboard [day]` | `!lb [day]` | Combined current, yesterday, or dated board |
-| `/status` | `!status` | Server settings, expected puzzles and current deadline |
+| `/status` | `!status` | Server settings, expected puzzles, daily challenge links and deadline |
 | `/setup` | `!setup #results [#boards] [timezone] [cutoff] [scoring]` | Admin configuration |
 | `/puzzle_date` | `!puzzle_date timeguessr 1262 2026-11-13` | Admin date correction for a numbered puzzle |
 | `/void_result` | `!void_result @player metazooa` | Admin correction of a current-day entry |
@@ -230,3 +238,14 @@ results in one message, ties, server isolation, repeated puzzles across midnight
 date overrides, DST, recovery, command registration, board pagination and posting reconciliation.
 Discord tests use mocks and do not prove live credentials/permissions; finish with `/ping`,
 `/setup`, one real result and `/leaderboard` in a test server.
+
+## Startup troubleshooting
+
+- **403 / 50001 Missing Access during command sync:** authentication succeeded, but
+  Discord denied command registration. If `DEV_GUILD_ID` is set, confirm it is the
+  test server's ID (right-click the server, not a channel) and install this same bot
+  application in that server using **Guild Install** with `bot` and
+  `applications.commands` scopes. Adding the application only to your user account
+  does not install the bot in a server. Restart after correcting the ID or installation.
+- **PyNaCl / davey voice warnings:** this bot uses text only; voice dependencies are
+  optional and do not cause the startup failure above.

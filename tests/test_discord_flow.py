@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 import pytest
 
-from daily_games.bot import CompetitionCommands, DailyGamesBot, board_embeds
+from daily_games.bot import CommandSyncError, CompetitionCommands, DailyGamesBot, board_embeds
 from daily_games.models import Game, ParsedResult
 from daily_games.presentation import make_snapshot
 from daily_games.service import accept_result
@@ -57,6 +57,51 @@ async def test_hybrid_commands_register_without_discord_connection(bot):
     for command in bot.tree.get_commands():
         payload = command.to_dict(bot.tree)
         assert payload["name"] == command.name
+
+
+@pytest.mark.parametrize("guild_id", [None, 100])
+async def test_startup_syncs_only_the_configured_scope(bot, monkeypatch, guild_id):
+    bot.dev_guild_id = guild_id
+    sync = AsyncMock()
+    start = MagicMock()
+    monkeypatch.setattr(bot.tree, "sync", sync)
+    monkeypatch.setattr(bot.daily_tick, "start", start)
+    await bot.setup_hook()
+    if guild_id:
+        assert sync.await_args.kwargs["guild"].id == guild_id
+        assert bot.tree.get_commands(guild=discord.Object(id=guild_id))
+    else:
+        sync.assert_awaited_once_with()
+    assert sync.await_count == 1
+    start.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    "guild_id,code,expected",
+    [
+        (100, 50001, "Copy Server ID"),
+        (100, 50013, "Guild Install"),
+        (None, 50001, "installation settings"),
+    ],
+)
+async def test_startup_explains_denied_sync_without_starting_scheduler(
+    bot, monkeypatch, guild_id, code, expected
+):
+    bot.dev_guild_id = guild_id
+    error = discord.Forbidden(
+        SimpleNamespace(status=403, reason="Forbidden"),
+        {"code": code, "message": "Missing Access"},
+    )
+    sync = AsyncMock(side_effect=error)
+    start = MagicMock()
+    monkeypatch.setattr(bot.tree, "sync", sync)
+    monkeypatch.setattr(bot.daily_tick, "start", start)
+    with pytest.raises(CommandSyncError, match=expected) as caught:
+        await bot.setup_hook()
+    assert str(code) in str(caught.value)
+    assert "applications.commands" in str(caught.value)
+    assert sync.await_count == 1
+    start.assert_not_called()
 
 
 async def test_ingestion_records_before_reacting(bot, store, config, message_time):

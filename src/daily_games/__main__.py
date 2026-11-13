@@ -6,7 +6,7 @@ import discord
 from dotenv import load_dotenv
 from filelock import FileLock, Timeout
 
-from .bot import DailyGamesBot
+from .bot import CommandSyncError, DailyGamesBot
 from .storage import Store
 
 
@@ -32,6 +32,8 @@ def main():
                 bot.run(token, log_handler=None)
             finally:
                 store.close()
+    except CommandSyncError as exc:
+        raise SystemExit(str(exc)) from None
     except Timeout:
         raise SystemExit("Another bot process is already using this database.") from None
     except discord.LoginFailure:

@@ -2,7 +2,7 @@
 
 ## Agreed scope
 
-- Python, developed/run in WSL2; test using the Windows Discord client.
+- Python 3.12+, developed/run locally on macOS or Linux/WSL2; test using Discord.
 - TimeGuessr, standard Magnitudle Size It Up, and Metazooa only.
 - Independent competitions per Discord server; users may play in several servers.
 - Players paste the games' Share text into a configured channel; no registration.

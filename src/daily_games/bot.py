@@ -10,7 +10,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from .calendar import active_day, boundary, closes_at, parse_cutoff, post_due_at, validate_timezone
-from .models import GAME_TITLES, Game, ServerConfig
+from .models import GAME_TITLES, GAME_URLS, Game, ServerConfig
 from .parsers import parse_message
 from .presentation import make_snapshot, score_label
 from .service import accept_result, requested_day
@@ -20,6 +20,10 @@ log = logging.getLogger(__name__)
 ScoringMode = Literal["players_beaten", "placement"]
 NumberedGame = Literal["timeguessr", "metazooa"]
 GameName = Literal["timeguessr", "sizeitup", "metazooa"]
+
+
+class CommandSyncError(RuntimeError):
+    """Discord denied access while registering commands during startup."""
 
 
 def board_marker(guild_id: int, day: date) -> str:
@@ -94,14 +98,30 @@ class DailyGamesBot(commands.Bot):
 
     async def setup_hook(self):
         await self.add_cog(CompetitionCommands(self))
-        if self.dev_guild_id:
-            guild = discord.Object(id=self.dev_guild_id)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            log.info("Slash commands synced to development server %s", self.dev_guild_id)
-        else:
-            await self.tree.sync()
-            log.info("Slash commands synced globally")
+        try:
+            if self.dev_guild_id:
+                guild = discord.Object(id=self.dev_guild_id)
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+                log.info("Slash commands synced to development server %s", self.dev_guild_id)
+            else:
+                await self.tree.sync()
+                log.info("Slash commands synced globally")
+        except discord.Forbidden as exc:
+            if self.dev_guild_id:
+                detail = (
+                    f"Could not register slash commands in development server {self.dev_guild_id}. "
+                    "Check DEV_GUILD_ID in .env: right-click the server and Copy Server ID "
+                    "(not a channel or application ID). Install this same bot application "
+                    "to that server using Guild Install with bot and applications.commands scopes."
+                )
+            else:
+                detail = (
+                    "Could not register global slash commands. Check the application's "
+                    "installation settings and reinstall it with bot and "
+                    "applications.commands scopes."
+                )
+            raise CommandSyncError(f"{detail} Discord error: {exc.code} ({exc.text}).") from exc
         self.daily_tick.start()
 
     async def close(self):
@@ -351,7 +371,7 @@ class CompetitionCommands(commands.Cog):
             "in the results channel.\n"
             "`/leaderboard` or `!lb` — current combined standings\n"
             "`!lb yesterday` or `!lb 2026-11-13` — another day\n"
-            "`/status` or `!status` — settings, current puzzles and deadline\n"
+            "`/status` or `!status` — settings, current puzzles, play links and deadline\n"
             "`/games` or `!games` — play links\n"
             "`/ping` or `!ping` — connection check\n\n"
             "One entry per player/game/puzzle **in each server**. First submission counts. "
@@ -365,11 +385,7 @@ class CompetitionCommands(commands.Cog):
 
     @commands.hybrid_command(name="games", description="Links to the three daily games.")
     async def games(self, ctx: commands.Context):
-        await ctx.send(
-            "TimeGuessr: <https://timeguessr.com>\n"
-            "Size It Up: <https://magnitudle.com/size-it-up>\n"
-            "Metazooa: <https://metazooa.com>"
-        )
+        await ctx.send("\n".join(f"{GAME_TITLES[game]}: <{GAME_URLS[game]}>" for game in Game))
 
     @commands.hybrid_command(name="setup", description="Configure this server's daily competition.")
     @commands.guild_only()
@@ -466,7 +482,10 @@ class CompetitionCommands(commands.Cog):
         for embed in board_embeds(snapshot, cfg.guild_id, final=final):
             await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="status", description="Show this server's settings and deadline.")
+    @commands.hybrid_command(
+        name="status",
+        description="Show this server's settings, daily challenge links and deadline.",
+    )
     @commands.guild_only()
     async def status(self, ctx: commands.Context):
         from .calendar import ANCHOR_DAY, ANCHORS
@@ -481,7 +500,7 @@ class CompetitionCommands(commands.Cog):
                 if game == Game.SIZE_IT_UP
                 else str(ANCHORS[game] + (today - ANCHOR_DAY).days)
             )
-            expected.append(f"{GAME_TITLES[game]}: `{puzzle}`")
+            expected.append(f"{GAME_TITLES[game]}: `{puzzle}` · [Play daily](<{GAME_URLS[game]}>)")
         deadline = int(closes_at(today, cfg).timestamp())
         await ctx.send(
             f"**Competition: {today}**\n"

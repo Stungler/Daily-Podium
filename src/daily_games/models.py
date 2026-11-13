@@ -15,6 +15,12 @@ GAME_TITLES = {
     Game.METAZOOA: "Metazooa",
 }
 
+GAME_URLS = {
+    Game.TIMEGUESSR: "https://timeguessr.com/play?mode=daily",
+    Game.SIZE_IT_UP: "https://magnitudle.com/size-it-up",
+    Game.METAZOOA: "https://metazooa.com/play/daily",
+}
+
 
 @dataclass(frozen=True)
 class ParsedResult:
