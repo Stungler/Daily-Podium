@@ -6,6 +6,11 @@ their Share results from **TimeGuessr**, **Magnitudle Size It Up (standard)**, a
 standings after the daily deadline.
 
 The implementation plan and decisions are in [PLAN.md](PLAN.md).
+A private [Tailscale dashboard](DASHBOARD.md) is available as a separate read-only
+process. Its [design plan](DASHBOARD_PLAN.md) and other feature ideas in
+[ROADMAP.md](ROADMAP.md) are retained in the repo.
+The separate [public leaderboards](PUBLIC_DASHBOARD.md) provide per-server links
+and a global cross-server board through Tailscale Funnel.
 
 ## Run locally (macOS or Linux/WSL2)
 
@@ -99,9 +104,25 @@ then request the standings:
 !lb
 !lb yesterday
 !lb 2026-11-13
+!lb sizeitup
+!lb timeguessr
+!lb metazooa
+!lb sizeitup yesterday
+!lb metazooa 2026-11-13
 ```
 
-`/leaderboard` offers the same `day` option. With several servers, paste the same result
+`/leaderboard` offers `day` and `game` options (All games, TimeGuessr, Size It Up,
+Metazooa). Existing `!lb [day]` commands still work; `!lb yesterday sizeitup` also works.
+Single-game boards show only that game's participants, ranked by its awarded points with
+shared ranks for ties. Points match the combined board, including placement scoring.
+Historical boards use the saved final snapshot; viewing a game does not change it or the
+combined daily posts. No database migration or new setup is required.
+When public dashboard links are configured, leaderboard replies also link to
+this server's full browser board and the global leaderboard. The global board
+counts each player's earliest accepted submission per game and date across
+servers, then recalculates points for the shared field.
+
+With several servers, paste the same result
 in each server's results channel to compete there; results do not automatically cross-post.
 
 ## Commands
@@ -111,7 +132,7 @@ in each server's results channel to compete there; results do not automatically 
 | `/ping` | `!ping` | Connection check |
 | `/help` | `!help` | Instructions |
 | `/games` | `!games` | Links to the three games |
-| `/leaderboard [day]` | `!lb [day]` | Combined current, yesterday, or dated board |
+| `/leaderboard [day] [game]` | `!lb [day] [game]` or `!lb game [day]` | Combined or single-game current, yesterday, or dated board |
 | `/status` | `!status` | Server settings, expected puzzles, daily challenge links and deadline |
 | `/setup` | `!setup #results [#boards] [timezone] [cutoff] [scoring]` | Admin configuration |
 | `/puzzle_date` | `!puzzle_date timeguessr 1262 2026-11-13` | Admin date correction for a numbered puzzle |

@@ -3,6 +3,7 @@ import json
 import logging
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Literal
 
 import discord
@@ -12,7 +13,8 @@ from discord.ext import commands, tasks
 from .calendar import active_day, boundary, closes_at, parse_cutoff, post_due_at, validate_timezone
 from .models import GAME_TITLES, GAME_URLS, Game, ServerConfig
 from .parsers import parse_message
-from .presentation import make_snapshot, score_label
+from .presentation import game_snapshot, make_snapshot, score_label
+from .public_links import leaderboard_links
 from .service import accept_result, requested_day
 from .storage import Store
 
@@ -31,21 +33,22 @@ def board_marker(guild_id: int, day: date) -> str:
 
 
 def board_embeds(
-    snapshot: dict, guild_id: int, *, final: bool, scheduled: bool = False
+    snapshot: dict, guild_id: int, *, final: bool, scheduled: bool = False, game: Game | None = None
 ) -> list[discord.Embed]:
     """Page embeds to respect Discord limits without silently truncating players."""
     day = date.fromisoformat(snapshot["day"])
     heading = "Final standings" if final else "Current standings · provisional"
+    title = "Daily Games"
+    games = [(Game.TIMEGUESSR, "TG"), (Game.SIZE_IT_UP, "Size"), (Game.METAZOOA, "Zoo")]
+    if game is not None:
+        snapshot = game_snapshot(snapshot, game)
+        title = GAME_TITLES[game]
+        games = [(game, title)]
     lines = []
     for row in snapshot["rows"]:
         name = discord.utils.escape_markdown(discord.utils.escape_mentions(row["name"]))[:80]
         scores = " · ".join(
-            f"{label}: {score_label(game, row['games'].get(game.value))}"
-            for game, label in (
-                (Game.TIMEGUESSR, "TG"),
-                (Game.SIZE_IT_UP, "Size"),
-                (Game.METAZOOA, "Zoo"),
-            )
+            f"{label}: {score_label(game, row['games'].get(game.value))}" for game, label in games
         )
         lines.append(f"**{row['rank']}. {name} — {row['total']} pts**\n{scores}")
     pages, page = [], ""
@@ -58,7 +61,7 @@ def board_embeds(
     embeds = []
     for index, description in enumerate(pages, start=1):
         embed = discord.Embed(
-            title=f"Daily Games · {day} · {heading}",
+            title=f"{title} · {day} · {heading}",
             description=description,
             color=discord.Color.gold() if final else discord.Color.teal(),
         )
@@ -135,6 +138,12 @@ class DailyGamesBot(commands.Bot):
             self.user.id,
             len(self.store.configs()),
         )
+        database = self.store.db.execute("PRAGMA database_list").fetchone()[2]
+        if database:
+            for cfg in self.store.configs():
+                guild = self.get_guild(cfg.guild_id)
+                if guild:
+                    leaderboard_links(Path(database), guild.id, guild.name, "today", "all")
         await self.recover_all()
 
     async def on_disconnect(self):
@@ -371,6 +380,9 @@ class CompetitionCommands(commands.Cog):
             "in the results channel.\n"
             "`/leaderboard` or `!lb` — current combined standings\n"
             "`!lb yesterday` or `!lb 2026-11-13` — another day\n"
+            "`!lb sizeitup`, `!lb timeguessr`, `!lb metazooa` — one game\n"
+            "`!lb sizeitup yesterday` — one game on another day\n"
+            "`/leaderboard` also offers a game selector.\n"
             "`/status` or `!status` — settings, current puzzles, play links and deadline\n"
             "`/games` or `!games` — play links\n"
             "`/ping` or `!ping` — connection check\n\n"
@@ -459,11 +471,27 @@ class CompetitionCommands(commands.Cog):
     @commands.hybrid_command(
         name="leaderboard",
         aliases=["lb"],
-        description="Combined standings for today or another date.",
+        description="Combined or single-game standings for today or another date.",
     )
     @commands.guild_only()
     @commands.cooldown(1, 5, commands.BucketType.member)
-    async def leaderboard_command(self, ctx: commands.Context, day: str = "today"):
+    @app_commands.choices(
+        game=[app_commands.Choice(name="All games", value="all")]
+        + [app_commands.Choice(name=GAME_TITLES[item], value=item.value) for item in Game]
+    )
+    async def leaderboard_command(
+        self, ctx: commands.Context, day: str = "today", game: str = "all"
+    ):
+        # Keep !lb yesterday / !lb DATE and also accept !lb GAME [DAY].
+        day, game = day.casefold(), game.casefold()
+        if day in {item.value for item in Game}:
+            day, game = ("today" if game == "all" else game), day
+        try:
+            selected_game = None if game == "all" else Game(game)
+        except ValueError as exc:
+            raise commands.BadArgument(
+                "Choose all, timeguessr, sizeitup, or metazooa for the game."
+            ) from exc
         cfg = self.config(ctx)
         selected = requested_day(day, datetime.now(UTC), cfg)
         await ctx.defer()
@@ -479,7 +507,26 @@ class CompetitionCommands(commands.Cog):
         final = board is not None
         if not final and selected < active_day(datetime.now(UTC), cfg):
             await ctx.send("Submissions are closed for that day; its final board is pending.")
-        for embed in board_embeds(snapshot, cfg.guild_id, final=final):
+        database = self.bot.store.db.execute("PRAGMA database_list").fetchone()[2]
+        links = (
+            leaderboard_links(
+                Path(database),
+                cfg.guild_id,
+                getattr(ctx.guild, "name", "Daily Games"),
+                selected.isoformat(),
+                game,
+            )
+            if database
+            else None
+        )
+        embeds = board_embeds(snapshot, cfg.guild_id, final=final, game=selected_game)
+        if links:
+            embeds[-1].add_field(
+                name="Full leaderboard in your browser",
+                value=f"[This server]({links['server']}) · [Global leaderboard]({links['global']})",
+                inline=False,
+            )
+        for embed in embeds:
             await ctx.send(embed=embed)
 
     @commands.hybrid_command(

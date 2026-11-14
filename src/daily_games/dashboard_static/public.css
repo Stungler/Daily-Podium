@@ -1,0 +1,32 @@
+.scope-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-bottom: 18px;
+}
+.scope-toggle .tab.active {
+  background: var(--accent);
+  color: #202719;
+}
+.scope-toggle .tab:disabled {
+  opacity: .4;
+  cursor: default;
+}
+.public-bottom {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 24px;
+  margin-top: 24px;
+}
+.rules-text {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.public-bottom h2 { margin-bottom: 14px; }
+@media (max-width: 640px) {
+  .public-bottom { grid-template-columns: 1fr; gap: 18px; }
+  .topbar .private-label { max-width: 110px; text-align: right; }
+}

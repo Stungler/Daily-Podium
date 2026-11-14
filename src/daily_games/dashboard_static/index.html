@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Daily Podium — private competition and bot dashboard.">
+  <title>Daily Podium · Dashboard</title>
+  <link rel="stylesheet" href="/assets/dashboard.css">
+  <script src="/assets/dashboard.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Daily Podium home"><span class="brandmark">dp<span>·</span></span><span>daily podium<span class="brand-sub">COMPETITION CONTROL ROOM</span></span></a>
+    <div class="topbar-right"><span class="private-label"><span class="dot"></span> PRIVATE / TAILNET</span><span class="host-label">bee</span></div>
+  </header>
+  <main>
+    <section class="page-heading">
+      <div><p class="eyebrow">A LITTLE COMPETITION. EVERY DAY.</p><h1>Your daily field of play<span>.</span></h1><p class="subtitle">Three games. One podium. Everything in view.</p></div>
+      <div class="server-control"><label for="server">DISCORD SERVER</label><select id="server" disabled><option>Loading servers…</option></select><span class="hint">Independent standings for each server</span></div>
+    </section>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <div class="refresh-line"><span id="freshness" aria-live="polite">Connecting to dashboard…</span><button id="refresh" class="text-button" type="button">↻ Refresh now</button></div>
+    <section id="empty" class="panel empty" hidden><span class="eyebrow">READY WHEN YOU ARE</span><h2>No competitions configured yet</h2><p>In Discord, use <code>!setup #your-results-channel</code> with Manage Server permission, then refresh this page.</p></section>
+    <div id="content" hidden>
+      <section class="stats-grid" aria-label="Today's participation">
+        <article class="stat-card"><span class="stat-label">PLAYERS TODAY</span><strong id="players">—</strong><span class="stat-foot">On today's field</span></article>
+        <article class="stat-card"><span class="stat-label">RESULTS TODAY</span><strong id="submissions">—</strong><span class="stat-foot">Accepted across all games</span></article>
+        <article class="stat-card"><span class="stat-label">COMPETITION DAY</span><strong id="competition-day" class="date-stat">—</strong><span id="timezone" class="stat-foot">—</span></article>
+        <article class="stat-card accent-card"><span class="stat-label">UNTIL TODAY'S CUTOFF</span><strong id="countdown">—</strong><span id="cutoff-label" class="stat-foot">—</span></article>
+      </section>
+      <div class="main-grid">
+        <section class="panel leaderboard-panel">
+          <div class="panel-heading"><div><span class="eyebrow">THE STANDINGS</span><h2 id="board-title">Daily leaderboard</h2></div><span id="board-state" class="badge">—</span></div>
+          <div class="board-tools"><div class="tabs" role="group" aria-label="Leaderboard game"><button class="tab active" data-game="all" aria-pressed="true">Combined</button><button class="tab" data-game="timeguessr" aria-pressed="false">TimeGuessr</button><button class="tab" data-game="sizeitup" aria-pressed="false">Size It Up</button><button class="tab" data-game="metazooa" aria-pressed="false">Metazooa</button></div>
+            <div class="date-controls"><label for="day" class="sr-only">Competition date</label><select id="day"><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="custom">Choose date…</option></select><label for="custom-day" class="sr-only">Custom competition date</label><input type="date" id="custom-day" min="0001-01-02" max="9999-12-30" hidden></div>
+          </div>
+          <div class="table-scroll"><table><caption id="board-caption" class="sr-only">Daily competition standings</caption><thead id="board-head"></thead><tbody id="board-rows"></tbody></table></div>
+          <div id="board-empty" class="empty compact" hidden><h3>A fresh start</h3><p>No results for this game and date yet. Share a result in Discord to get on the board.</p></div>
+          <div class="panel-footer"><span id="scoring">—</span><span id="board-note">—</span></div>
+        </section>
+        <aside class="side-stack">
+          <section class="panel status-panel"><div class="panel-heading"><div><span class="eyebrow">BEHIND THE SCENES</span><h2>Bot health</h2></div><span id="health-dot" class="health-light" aria-hidden="true"></span></div>
+            <dl class="status-list"><div><dt>Bot process</dt><dd id="process-state">—</dd></div><div><dt>Process uptime</dt><dd id="uptime">—</dd></div><div><dt>Discord connection</dt><dd class="muted">Not measured</dd></div><div><dt>Database</dt><dd id="database-state">—</dd></div><div><dt>Last submission</dt><dd id="latest-result">—</dd></div></dl>
+            <p class="status-note">Process status is observed on this server. Discord readiness is not reported by the current bot.</p>
+          </section>
+          <section class="panel participation-panel"><span class="eyebrow">TODAY'S MIX</span><h2>Game participation</h2><div id="participation"></div></section>
+        </aside>
+      </div>
+      <div class="bottom-grid">
+        <section class="panel"><div class="panel-heading"><div><span class="eyebrow">JUST CAME IN</span><h2>Recent results</h2></div><span class="small-label">LATEST 20 · ALL DATES</span></div><div id="activity" class="activity-list"></div></section>
+        <section class="panel"><div class="panel-heading"><div><span class="eyebrow">IN THE BOOKS</span><h2>Final boards</h2></div><span class="small-label">LATEST 30</span></div><div id="history" class="history-list"></div></section>
+        <section class="panel settings-panel"><div class="panel-heading"><div><span class="eyebrow">HOUSE RULES</span><h2>Server settings</h2></div></div><dl class="status-list"><div><dt>Timezone</dt><dd id="setting-timezone">—</dd></div><div><dt>Daily cutoff</dt><dd id="setting-cutoff">—</dd></div><div><dt>Today's board due</dt><dd id="setting-post">—</dd></div><div><dt>Scoring</dt><dd id="setting-scoring">—</dd></div><div><dt>Results channel ID</dt><dd id="setting-input" class="mono">—</dd></div><div><dt>Board channel ID</dt><dd id="setting-output" class="mono">—</dd></div></dl><p class="status-note">Settings and results are managed through Discord. This dashboard is read-only.</p></section>
+      </div>
+    </div>
+    <footer class="page-footer"><span><strong>daily podium</strong> / A daily ritual, a friendly rivalry.</span><span>READ-ONLY · REFRESHES EVERY 20 SECONDS</span></footer>
+  </main>
+</body>
+</html>

@@ -35,6 +35,22 @@ def make_snapshot(results: list[Submission], day: date, config: ServerConfig) ->
     }
 
 
+def game_snapshot(snapshot: dict, game: Game) -> dict:
+    """Project a live or frozen board without changing its stored points or content."""
+    rows = [
+        {**row, "total": row["games"][game.value]["points"]}
+        for row in snapshot["rows"]
+        if game.value in row["games"]
+    ]
+    rows.sort(key=lambda row: (-row["total"], row["name"].casefold(), row["user_id"]))
+    rank = 0
+    for position, row in enumerate(rows, start=1):
+        if position == 1 or row["total"] != rows[position - 2]["total"]:
+            rank = position
+        row["rank"] = rank
+    return {**snapshot, "rows": rows}
+
+
 def score_label(game: Game, result: dict | None) -> str:
     if result is None:
         return "—"
