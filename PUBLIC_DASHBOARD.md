@@ -18,7 +18,10 @@ database but cannot change scores, settings, or bot processes.
 - `/global`: one cross-server leaderboard.
 - `/s/<stable-public-slug>`: one Discord server's leaderboard.
 - The page has a **This server / Global leaderboard** toggle, a community
-  selector, game tabs, and date controls. URLs retain the selected date and game.
+  selector, game tabs, date controls, and daily/weekly/monthly selection. URLs
+  retain the selected date, game, and period.
+- Week-to-date and month-to-date standings sum saved daily points through the
+  selected date, with days played, tied wins, and finalized-day coverage.
 - `!lb` and `/leaderboard` include links to both views when the public URL
   configuration exists.
 - Display names are learned from Discord at the bot's next startup and when
@@ -52,6 +55,8 @@ board is marked final only when every configured server that had started by that
 date has a saved final board. Until then, recovery in an unfinished server may
 change the global view. Global boards are derived views rather than a new stored
 competition; no database migration is required.
+Global weekly and monthly standings include only dates on which every participating
+server has finalized its board. Per-server periods include only that server's frozen days.
 
 ## Server processes and ports
 

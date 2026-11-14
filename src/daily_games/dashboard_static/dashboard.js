@@ -1,7 +1,7 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const state = { game: "all", day: "today", server: "", data: null, busy: false, changed: false, lastSuccess: null, stale: false };
+const state = { game: "all", day: "today", period: "day", server: "", data: null, busy: false, changed: false, lastSuccess: null, stale: false };
 const names = { timeguessr: "TimeGuessr", sizeitup: "Size It Up", metazooa: "Metazooa" };
 const games = Object.keys(names);
 const fmt = new Intl.NumberFormat();
@@ -35,16 +35,39 @@ function cell(tag, textValue, className) { return el(tag, className, textValue);
 function renderBoard(selected) {
   const board = selected.board;
   const activeGames = state.game === "all" ? games : [state.game];
-  text("board-title", state.game === "all" ? "Daily leaderboard" : `${names[state.game]} leaderboard`);
-  text("board-caption", `${niceDay(board.day)} — ${names[state.game] || "Combined standings"}`);
-  const status = { final: "Final", closed_pending: "Closed · final pending", provisional: "Provisional" }[selected.board_state];
+  const periodBoard = selected.period_board;
+  const label = { day: "Daily", week: "Weekly", month: "Monthly" }[state.period];
+  text("board-title", `${state.game === "all" ? "Combined" : names[state.game]} · ${label.toLowerCase()} standings`);
+  text("board-caption", periodBoard ? `${periodBoard.start} to ${periodBoard.through} — ${names[state.game] || "Combined standings"}` : `${niceDay(board.day)} — ${names[state.game] || "Combined standings"}`);
+  const status = periodBoard ? `${periodBoard.finalized_days}/${periodBoard.expected_days} days final` : { final: "Final", closed_pending: "Closed · final pending", provisional: "Provisional" }[selected.board_state];
   text("board-state", status);
-  $("board-state").className = `badge ${selected.board_state === "final" ? "final" : selected.board_state === "closed_pending" ? "pending" : ""}`;
+  const periodComplete = periodBoard && periodBoard.expected_days > 0 && periodBoard.finalized_days === periodBoard.expected_days;
+  $("board-state").className = `badge ${periodBoard ? periodComplete ? "final" : "pending" : selected.board_state === "final" ? "final" : selected.board_state === "closed_pending" ? "pending" : ""}`;
   document.querySelectorAll("[data-game]").forEach((button) => {
     const active = button.dataset.game === state.game;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
+  if (periodBoard) {
+    const head = el("tr");
+    ["Rank", "Player", "Points", "Days", "Wins"].forEach((name) => head.append(cell("th", name)));
+    $("board-head").replaceChildren(head);
+    $("board-rows").replaceChildren(...periodBoard.rows.map((row, index) => {
+      const tr = el("tr");
+      const rank = cell("td"); rank.append(el("span", `rank${row.rank === 1 ? " top" : ""}`, row.rank)); tr.append(rank);
+      const playerCell = cell("td"); const player = el("div", "player");
+      const initials = row.name.trim().split(/\s+/u).slice(0, 2).map((word) => [...word][0]).join("").toUpperCase() || "?";
+      player.append(el("span", `avatar tone-${index % 4}`, initials), el("span", "player-name", row.name));
+      player.title = row.name; playerCell.append(player); tr.append(playerCell);
+      const points = cell("td", undefined, "total"); points.append(document.createTextNode(fmt.format(row.points)), el("span", "", "pts"));
+      tr.append(points, cell("td", row.days, "score"), cell("td", row.wins, "score"));
+      return tr;
+    }));
+    $("board-empty").hidden = periodBoard.rows.length > 0;
+    text("scoring", "Saved daily points added · ties share rank · wins include ties");
+    text("board-note", `${periodBoard.start} → ${periodBoard.through} · ${periodBoard.finalized_days}/${periodBoard.expected_days} days finalized`);
+    return;
+  }
   const head = el("tr");
   ["Rank", "Player", ...activeGames.map((game) => names[game]), "Points"].forEach((name) => head.append(cell("th", name)));
   $("board-head").replaceChildren(head);
@@ -166,7 +189,7 @@ async function refresh() {
   state.busy = true;
   state.changed = false;
   $("refresh").disabled = true;
-  const requested = { server: state.server, day: state.day, game: state.game };
+  const requested = { server: state.server, day: state.day, game: state.game, period: state.period };
   try {
     const query = new URLSearchParams(requested);
     const response = await fetch(`/api/data?${query}`, { cache: "no-store", signal: AbortSignal.timeout(10000) });
@@ -209,6 +232,7 @@ function tick() {
 
 $("server").addEventListener("change", () => { state.server = $("server").value; refresh(); });
 document.querySelectorAll("[data-game]").forEach((button) => button.addEventListener("click", () => { state.game = button.dataset.game; refresh(); }));
+$("period").addEventListener("change", () => { state.period = $("period").value; refresh(); });
 $("day").addEventListener("change", () => {
   $("custom-day").hidden = $("day").value !== "custom";
   if ($("day").value === "custom") {

@@ -10,7 +10,7 @@ import sqlite3
 import time
 from collections import OrderedDict
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from aiohttp import web
@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from .calendar import active_day, closes_at
 from .dashboard import STATIC, config_from_row, read_database, response_headers, submission_from_row
 from .models import Game, ServerConfig
+from .periods import period_snapshot, period_start
 from .presentation import game_snapshot, make_snapshot
 from .public_links import configure, ensure_key, read_config, server_slug
 from .service import requested_day
@@ -110,9 +111,13 @@ def global_snapshot(db, configs, day):
     ) and active <= frozen.keys()
 
 
-def public_data(database: Path, key: bytes, scope: str, day: str, game: str) -> dict:
+def public_data(
+    database: Path, key: bytes, scope: str, day: str, game: str, period: str = "day"
+) -> dict:
     now = datetime.now(UTC)
     selected_game = None if game == "all" else Game(game)
+    if period not in {"day", "week", "month"}:
+        raise ValueError("Invalid period.")
     if scope != "global" and not re.fullmatch(r"[a-f0-9]{24}", scope):
         raise LookupError("Unknown competition.")
     local = read_config(database)
@@ -151,6 +156,39 @@ def public_data(database: Path, key: bytes, scope: str, day: str, game: str) -> 
             if scope == "global"
             else snapshot_for(db, cfg, selected_day)
         )
+        period_board = None
+        if period != "day":
+            start = period_start(selected_day, period)
+            if scope == "global":
+                # Global points are recalculated from earliest accepted results. Only
+                # fully finalized dates can contribute to a stable period board.
+                saved_days = []
+                current = max(start, GLOBAL_RULES.started_day)
+                while current <= selected_day:
+                    board, complete = global_snapshot(db, configs, current)
+                    if complete:
+                        saved_days.append(board)
+                    current += timedelta(days=1)
+                started = GLOBAL_RULES.started_day
+            else:
+                saved_days = []
+                for row in db.execute(
+                    "SELECT snapshot FROM boards WHERE guild_id=? AND day BETWEEN ? AND ? "
+                    "ORDER BY day",
+                    (cfg.guild_id, start.isoformat(), selected_day.isoformat()),
+                ):
+                    try:
+                        saved_days.append(json.loads(row["snapshot"]))
+                    except json.JSONDecodeError as exc:
+                        raise sqlite3.DatabaseError("Invalid saved board.") from exc
+                started = cfg.started_day
+            period_board = period_snapshot(
+                saved_days, selected_day, started, period, selected_game
+            )
+            period_board["rows"] = [
+                {field: row[field] for field in ("rank", "name", "points", "days", "wins")}
+                for row in period_board["rows"]
+            ]
         player_count = len(snapshot["rows"])
         result_count = sum(len(row["games"]) for row in snapshot["rows"])
         if selected_game is not None:
@@ -176,6 +214,8 @@ def public_data(database: Path, key: bytes, scope: str, day: str, game: str) -> 
             "today": today.isoformat(),
             "closes_at": closes_at(today, cfg).isoformat(),
             "game": game,
+            "period": period,
+            "period_board": period_board,
             "board": safe_snapshot(snapshot),
             "state": "final"
             if final
@@ -196,12 +236,13 @@ def public_data(database: Path, key: bytes, scope: str, day: str, game: str) -> 
 
 async def public_handler(request):
     settings = request.app[PUBLIC]
-    if set(request.query) - {"scope", "day", "game"}:
+    if set(request.query) - {"scope", "day", "game", "period"}:
         return web.json_response({"error": "Unsupported filter."}, status=400)
     args = (
         request.query.get("scope", "global"),
         request.query.get("day", "today"),
         request.query.get("game", "all"),
+        request.query.get("period", "day"),
     )
     if sum(len(arg) for arg in args) > 100:
         return web.json_response({"error": "Invalid filter."}, status=400)
@@ -223,7 +264,9 @@ async def public_handler(request):
             status=503,
         )
     except ValueError:
-        return web.json_response({"error": "Choose a supported game and a valid date."}, status=400)
+        return web.json_response(
+            {"error": "Choose a supported game, period, and date."}, status=400
+        )
     except LookupError:
         return web.json_response({"error": "Competition not found."}, status=404)
     return web.json_response(data)

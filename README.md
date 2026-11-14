@@ -116,6 +116,9 @@ then request the standings:
 !lb metazooa 2026-11-13
 !weekly
 !weekly yesterday
+!weekly sizeitup
+!monthly
+!monthly metazooa
 !stats
 !stats @friend
 ```
@@ -128,9 +131,11 @@ Historical boards use the saved final snapshot; viewing a game does not change i
 combined daily posts. No database migration or new setup is required.
 Leaderboard replies use compact aligned embeds. With public dashboard links configured,
 they show the top 10 and link to the full browser view; without links, they paginate all players.
-`!weekly [day]` and `/weekly` show this server's week-to-date points from finalized daily
-snapshots. The week starts Monday in the configured competition calendar. The footer shows
-how many days have been finalized so far.
+`!weekly [day] [game]` and `!monthly [day] [game]` (also slash commands) sum saved
+daily points through the selected date. Omit the game for combined standings or choose
+TimeGuessr, Size It Up, or Metazooa. Weeks start Monday; months start on the first.
+Only finalized days count. The footer shows finalized days, days played, and tied wins.
+Both dashboards offer the same daily, weekly, and monthly filters.
 `!stats` and `/stats` show your own stats, or another server member's stats when
 selected. They use only this server's finalized days: total and average daily
 points, participation, daily wins, and each game's plays, solves, wins, average
@@ -153,7 +158,8 @@ in each server's results channel to compete there; results do not automatically 
 | `/help` | `!help` | Instructions |
 | `/games` | `!games` | Links to the three games |
 | `/leaderboard [day] [game]` | `!lb [day] [game]` or `!lb game [day]` | Combined or single-game current, yesterday, or dated board |
-| `/weekly [day]` | `!weekly [day]` | Week-to-date points, days played, and daily wins from finalized boards |
+| `/weekly [day] [game]` | `!weekly [day] [game]` | Week-to-date combined or per-game points from finalized boards |
+| `/monthly [day] [game]` | `!monthly [day] [game]` | Month-to-date combined or per-game points from finalized boards |
 | `/stats [member]` | `!stats [@member]` | Personal history in this server from finalized days |
 | `/status` | `!status` | Server settings, expected puzzles, daily challenge links and deadline |
 | `/setup` | `!setup #results [#boards] [timezone] [cutoff] [scoring]` | Admin configuration |

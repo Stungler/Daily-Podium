@@ -300,6 +300,16 @@ async def test_weekly_command_reads_only_finalized_server_boards(delivery, store
     delivery.channel.create_thread.assert_not_awaited()
 
 
+async def test_monthly_game_command_uses_saved_game_points(delivery, store, config):
+    cog = CompetitionCommands(delivery.bot)
+    ctx = SimpleNamespace(guild=SimpleNamespace(id=100), send=AsyncMock())
+    await cog.monthly.callback(cog, ctx, DAY.isoformat(), "timeguessr")
+    embed = ctx.send.await_args.kwargs["embed"]
+    assert "This month · TimeGuessr" in embed.title
+    assert "1/1 days finalized" in embed.footer.text
+    assert "Player" in embed.description
+
+
 def test_additive_schema_preserves_old_scores(tmp_path, config):
     path = tmp_path / "migration.sqlite3"
     old = Store(path)

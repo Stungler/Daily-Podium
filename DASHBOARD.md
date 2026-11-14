@@ -89,6 +89,9 @@ Using `python -m daily_games.dashboard` works with the existing editable install
 - Server selection by Discord server ID; names are not stored in the database.
 - Today's participation, local competition date, and countdown to cutoff.
 - Combined and individual-game boards for today, yesterday, or a selected date.
+- Daily, week-to-date, and month-to-date boards for combined and individual games.
+  Period boards add saved daily points through the selected date and show days played,
+  wins (including ties), and finalized-day coverage. Provisional days do not count.
 - Shared tie ranks and awarded points matching Discord, including placement mode.
 - Frozen snapshots for final boards; viewing them never changes results.
 - Latest 20 accepted, non-voided submissions and latest 30 final boards per server.

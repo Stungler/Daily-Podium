@@ -1,11 +1,12 @@
 """Compact Discord views and summaries derived from immutable daily snapshots."""
 
 import unicodedata
-from datetime import date, timedelta
+from datetime import date
 
 import discord
 
 from .models import GAME_TITLES, Game
+from .periods import period_snapshot
 from .presentation import game_snapshot, score_label
 
 MAUVE = 0xCBA6F7
@@ -109,45 +110,15 @@ def daily_highlights(snapshot):
     return embed
 
 
-def weekly_snapshot(snapshots, through: date, started: date):
-    monday = through - timedelta(days=through.weekday())
-    first = max(monday, started)
-    days = sorted(
-        (
-            snapshot
-            for snapshot in snapshots
-            if first.isoformat() <= snapshot["day"] <= through.isoformat()
-        ),
-        key=lambda snapshot: snapshot["day"],
-    )
-    players = {}
-    for snapshot in days:
-        for row in snapshot["rows"]:
-            player = players.setdefault(
-                row["user_id"], {"user_id": row["user_id"], "points": 0, "days": 0, "wins": 0}
-            )
-            player["name"] = row["name"]
-            player["points"] += row["total"]
-            player["days"] += 1
-            player["wins"] += int(row["rank"] == 1 and row["total"] > 0)
-    ordered = sorted(
-        players.values(), key=lambda row: (-row["points"], row["name"].casefold(), row["user_id"])
-    )
-    rank = 0
-    for index, row in enumerate(ordered, start=1):
-        if index == 1 or row["points"] != ordered[index - 2]["points"]:
-            rank = index
-        row["rank"] = rank
-    return {
-        "start": monday.isoformat(),
-        "through": through.isoformat(),
-        "finalized_days": len(days),
-        "expected_days": max(0, (through - first).days + 1),
-        "rows": ordered,
-    }
+def weekly_snapshot(snapshots, through: date, started: date, game: Game | None = None):
+    return period_snapshot(snapshots, through, started, "week", game)
 
 
 def weekly_embed(summary):
+    return period_embed(summary)
+
+
+def period_embed(summary):
     lines = [
         f"`{row['rank']:>3} {name_column(row['name'])} {row['points']:>4} "
         f"{row['days']:>2} {row['wins']:>3}`"
@@ -157,19 +128,23 @@ def weekly_embed(summary):
     description = (
         "\n".join([header, *lines])
         if lines
-        else "No player results in finalized days for this week yet."
+        else f"No player results in finalized days for this {summary['period']} yet."
     )
     if len(summary["rows"]) > 10:
         description += f"\n*Top 10 of {len(summary['rows'])} players.*"
     embed = discord.Embed(
-        title=f"This week · {summary['start']} → {summary['through']}",
+        title=(
+            f"This {summary['period']} · "
+            f"{GAME_TITLES[Game(summary['game'])] if summary['game'] != 'all' else 'Combined'} · "
+            f"{summary['start']} → {summary['through']}"
+        ),
         description=description,
         color=MAUVE,
     )
     embed.set_footer(
         text=(
             f"{summary['finalized_days']}/{summary['expected_days']} days finalized · "
-            "daily points added · d = days played · wins include ties"
+            "saved daily points added · d = days played · wins include ties"
         )
     )
     return embed

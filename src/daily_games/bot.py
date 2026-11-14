@@ -15,6 +15,7 @@ from .discord_views import (
     MAUVE,
     compact_boards,
     daily_highlights,
+    period_embed,
     player_stats_embed,
     player_stats_snapshot,
     weekly_embed,
@@ -22,6 +23,7 @@ from .discord_views import (
 )
 from .models import GAME_TITLES, GAME_URLS, Game, ServerConfig
 from .parsers import parse_message
+from .periods import period_snapshot, period_start
 from .presentation import game_snapshot, make_snapshot, score_label
 from .public_links import leaderboard_links
 from .service import accept_result, requested_day
@@ -549,7 +551,8 @@ class CompetitionCommands(commands.Cog):
                 "`!lb` · standings and browser links\n"
                 "`!lb sizeitup` / `timeguessr` / `metazooa` · one game\n"
                 "`!lb yesterday` / `!lb sizeitup 2026-11-13` · another day\n"
-                "`!weekly [day]` · weekly points from finalized days\n"
+                "`!weekly [day] [game]` · weekly points from finalized days\n"
+                "`!monthly [day] [game]` · monthly points from finalized days\n"
                 "`!stats [@player]` · personal stats from finalized days\n"
                 "`!games` · play links · `!status` · puzzles and deadline\n"
                 "`!ping` · connection check"
@@ -740,16 +743,44 @@ class CompetitionCommands(commands.Cog):
     )
     @commands.guild_only()
     @commands.cooldown(1, 5, commands.BucketType.member)
-    async def weekly(self, ctx: commands.Context, day: str = "today"):
+    @app_commands.choices(
+        game=[app_commands.Choice(name="All games", value="all")]
+        + [app_commands.Choice(name=GAME_TITLES[item], value=item.value) for item in Game]
+    )
+    async def weekly(self, ctx: commands.Context, day: str = "today", game: str = "all"):
+        await self.send_period(ctx, day, game, "week")
+
+    @commands.hybrid_command(
+        name="monthly", description="This server's monthly points from finalized days."
+    )
+    @commands.guild_only()
+    @commands.cooldown(1, 5, commands.BucketType.member)
+    @app_commands.choices(
+        game=[app_commands.Choice(name="All games", value="all")]
+        + [app_commands.Choice(name=GAME_TITLES[item], value=item.value) for item in Game]
+    )
+    async def monthly(self, ctx: commands.Context, day: str = "today", game: str = "all"):
+        await self.send_period(ctx, day, game, "month")
+
+    async def send_period(self, ctx: commands.Context, day: str, game: str, period: str):
+        day, game = day.casefold(), game.casefold()
+        if day in {item.value for item in Game}:
+            day, game = ("today" if game == "all" else game), day
+        try:
+            selected_game = None if game == "all" else Game(game)
+        except ValueError as exc:
+            raise commands.BadArgument(
+                "Choose all, timeguessr, sizeitup, or metazooa for the game."
+            ) from exc
         cfg = self.config(ctx)
         selected = requested_day(day, datetime.now(UTC), cfg)
-        monday = selected - timedelta(days=selected.weekday())
-        summary = weekly_snapshot(
-            self.bot.store.finalized_snapshots(cfg.guild_id, monday, selected),
-            selected,
-            cfg.started_day,
+        summary = period_snapshot(
+            self.bot.store.finalized_snapshots(
+                cfg.guild_id, period_start(selected, period), selected
+            ),
+            selected, cfg.started_day, period, selected_game,
         )
-        await ctx.send(embed=weekly_embed(summary))
+        await ctx.send(embed=period_embed(summary))
 
     @commands.hybrid_command(
         name="stats", description="Personal stats from this server's finalized days."

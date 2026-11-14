@@ -152,6 +152,7 @@ async def test_public_routes_do_not_expose_private_assets(public_client):
         ("scope=100", 404),
         ("scope=" + "f" * 24, 404),
         ("game=nope", 400),
+        ("period=year", 400),
         ("day=nope", 400),
         ("day=9999-12-31", 400),
         ("server=100", 400),
@@ -196,6 +197,29 @@ def test_global_waits_for_all_servers_and_keeps_server_points(public_setup, stor
     assert [(row["name"], row["total"]) for row in server["board"]["rows"]] == [
         (row["name"], row["total"]) for row in snapshot["rows"]
     ]
+
+
+def test_public_period_requires_finalized_global_day_and_hides_ids(public_setup, store, config):
+    path, day = public_setup
+    first = make_snapshot(store.results(100, day), day, config)
+    store.freeze(100, day, 300, first)
+    slug = server_slug(KEY, 100)
+    server = public_data(path, KEY, slug, day.isoformat(), "timeguessr", "month")
+    assert server["period_board"]["finalized_days"] == 1
+    assert {row["name"] for row in server["period_board"]["rows"]} == {
+        "Player 1", "Player 2"
+    }
+    global_pending = public_data(path, KEY, "global", day.isoformat(), "all", "month")
+    assert global_pending["period_board"]["finalized_days"] == 0
+    assert global_pending["period_board"]["rows"] == []
+    other = next(cfg for cfg in store.configs() if cfg.guild_id == 101)
+    store.freeze(101, day, 300, make_snapshot(store.results(101, day), day, other))
+    global_final = public_data(path, KEY, "global", day.isoformat(), "all", "month")
+    assert global_final["period_board"]["finalized_days"] == 1
+    assert {row["name"]: row["points"] for row in global_final["period_board"]["rows"]} == {
+        row["name"]: row["total"] for row in global_final["board"]["rows"]
+    }
+    assert "user_id" not in all_keys(global_final)
 
 
 async def test_public_missing_db_is_generic(tmp_path):

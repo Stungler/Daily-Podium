@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 
 from .calendar import active_day, closes_at, post_due_at
 from .models import GAME_TITLES, Game, ServerConfig, Submission
+from .periods import period_snapshot, period_start
 from .presentation import game_snapshot, make_snapshot
 from .service import requested_day
 
@@ -134,9 +135,13 @@ def board_record(row: sqlite3.Row | None) -> dict | None:
     }
 
 
-def read_data(settings: DashboardSettings, server: str, day: str, game: str) -> dict:
+def read_data(
+    settings: DashboardSettings, server: str, day: str, game: str, period: str = "day"
+) -> dict:
     now = datetime.now(UTC)
     selected_game = None if game == "all" else Game(game)
+    if period not in {"day", "week", "month"}:
+        raise ValueError("Choose day, week, or month.")
     if server and (not server.isdecimal() or not 0 < int(server) < 2**63):
         raise ValueError("Choose a configured server.")
     with read_database(settings.database) as db:
@@ -183,6 +188,27 @@ def read_data(settings: DashboardSettings, server: str, day: str, game: str) -> 
             snapshot = make_snapshot([submission_from_row(row) for row in rows], selected_day, cfg)
         if selected_game is not None:
             snapshot = game_snapshot(snapshot, selected_game)
+        period_board = None
+        if period != "day":
+            saved_days = db.execute(
+                "SELECT snapshot FROM boards WHERE guild_id=? AND day BETWEEN ? AND ? "
+                "ORDER BY day",
+                (
+                    cfg.guild_id,
+                    period_start(selected_day, period).isoformat(),
+                    selected_day.isoformat(),
+                ),
+            ).fetchall()
+            try:
+                period_board = period_snapshot(
+                    [json.loads(row["snapshot"]) for row in saved_days],
+                    selected_day, cfg.started_day, period, selected_game,
+                )
+            except json.JSONDecodeError as exc:
+                raise sqlite3.DatabaseError("Invalid frozen board.") from exc
+            period_board["rows"] = [
+                {**row, "user_id": str(row["user_id"])} for row in period_board["rows"]
+            ]
         # Copy before serialization so frozen SQLite snapshots are never modified.
         snapshot["rows"] = [{**row, "user_id": str(row["user_id"])} for row in snapshot["rows"]]
         counts = db.execute(
@@ -225,6 +251,8 @@ def read_data(settings: DashboardSettings, server: str, day: str, game: str) -> 
                 "games": per_game,
             },
             "game": game,
+            "period": period,
+            "period_board": period_board,
             "board": snapshot,
             "board_state": "final"
             if saved_board
@@ -267,10 +295,12 @@ async def data_handler(request: web.Request) -> web.Response:
             request.query.get("server", ""),
             request.query.get("day", "today"),
             request.query.get("game", "all"),
+            request.query.get("period", "day"),
         )
     except (ValueError, OverflowError):
         return web.json_response(
-            {"error": "Choose a valid server, game, and day (today, yesterday, or YYYY-MM-DD)."},
+            {"error": "Choose a valid server, game, period, and day "
+             "(today, yesterday, or YYYY-MM-DD)."},
             status=400,
         )
     except ServerNotFound:

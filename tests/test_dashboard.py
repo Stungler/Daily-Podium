@@ -163,6 +163,24 @@ async def test_frozen_board_and_posting_state_are_preserved(client, store, confi
     assert json.loads(store.board(100, day)["snapshot"]) == snapshot
 
 
+async def test_period_board_uses_only_saved_days_and_selected_game(client, store, config, sample):
+    day = sample[0].day
+    snapshot = make_snapshot(store.results(100, day), day, config)
+    store.freeze(100, day, 300, snapshot)
+    store.insert(replace(sample[0], user_id=7, display_name="Late", message_id=77))
+    response = await client.get(f"/api/data?server=100&day={day}&period=month&game=timeguessr")
+    assert response.status == 200
+    selected = (await response.json())["selected"]
+    board = selected["period_board"]
+    assert board["start"] == day.replace(day=1).isoformat()
+    assert board["finalized_days"] == 1
+    assert "Late" not in json.dumps(board)
+    assert {row["name"]: row["points"] for row in board["rows"]} == {
+        row["name"]: row["total"] for row in game_snapshot(snapshot, Game.TIMEGUESSR)["rows"]
+    }
+    assert all(isinstance(row["user_id"], str) for row in board["rows"])
+
+
 async def test_server_switching_isolated(client, sample):
     selected = (await (await client.get("/api/data?server=101")).json())["selected"]
     assert selected["today_counts"]["submissions"] == 1
@@ -174,6 +192,7 @@ async def test_server_switching_isolated(client, sample):
     "query",
     [
         "game=unknown",
+        "period=year",
         "server=invalid",
         "server=-1",
         "server=9223372036854775808",

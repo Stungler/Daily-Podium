@@ -27,10 +27,12 @@ systemctl --user list-timers daily-podium-backup.timer daily-podium-offsite.time
 journalctl --user -u daily-podium-bot.service -f
 ```
 
-Restart only the bot after a code change:
+Restart the affected service after a code change. For changes to bot commands and
+both dashboards, restart all three after development is complete:
 
 ```sh
-systemctl --user restart daily-podium-bot.service
+systemctl --user restart daily-podium-bot.service \
+  daily-podium-private-dashboard.service daily-podium-public-dashboard.service
 journalctl --user -u daily-podium-bot.service -n 30 --no-pager
 ```
 
