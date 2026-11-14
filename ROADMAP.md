@@ -2,46 +2,44 @@
 
 Updated: 2026-11-14
 
-## First priority: Tailscale dashboard
+## Private Tailscale dashboard
 
 Build a private, read-only dashboard on the Beelink server (`bee`) for inspecting
 the Discord bot's status, configuration, scores, and history. See
 [DASHBOARD_PLAN.md](DASHBOARD_PLAN.md) for the proposed first version and rollout.
 
-Status: first dashboard version implemented and tested in source; not deployed.
-See [DASHBOARD.md](DASHBOARD.md) to start it manually. The running Discord bot has
-been left untouched.
+Status: implemented and running as a systemd user service. See
+[SYSTEMD.md](SYSTEMD.md) for current operations.
 
 ## Other feature ideas to retain
 
-### Pending operations TODO: permanent systemd services
+### Operations status and remaining backup work
 
-- [ ] Create separate systemd services for the Discord bot and dashboard, running
+- [x] Create separate systemd services for the Discord bot and dashboard, running
   as `stefan` from `/home/stefan/dev/Daily-Podium` with the existing `.venv`.
-- [ ] Include the separate loopback public leaderboard backend (`8766`) in systemd
+- [x] Include the separate loopback public leaderboard backend (`8766`) in systemd
   setup, and retain its stable public-link key during backups/restores.
-- [ ] Enable startup at boot, automatic restart after failures, graceful shutdown,
+- [x] Enable startup at boot, automatic restart after failures, graceful shutdown,
   and journal logging. Account for Tailscale readiness before dashboard startup
   and retry if its address is temporarily unavailable.
-- [ ] Keep the dashboard listener on `100.118.9.35:8765` and retain the existing
+- [x] Keep the dashboard listener on `100.118.9.35:8765` and retain the existing
   `.env` and SQLite database paths.
-- [ ] Switch from the manually detached processes in a controlled handover,
+- [x] Switch from the manually detached processes in a controlled handover,
   avoiding duplicate bot processes and preserving stored scores and settings.
-  Do not stop/restart either live process until the user authorizes the handover.
-- [ ] Schedule consistent SQLite backups separately, with retention and a tested
+- [x] Schedule consistent SQLite backups separately, with retention and a tested
   restore into a scratch database.
+- [ ] Copy encrypted archives and the separate password to independent/off-host
+  storage so an SSD or host failure does not destroy the only copy.
 
-For now, the user is running the dashboard manually with `nohup`; systemd setup
-remains pending. See [DASHBOARD.md](DASHBOARD.md#run-detached) for the commands.
+The services and backup timer are active; see [SYSTEMD.md](SYSTEMD.md).
 
 ### Feature backlog
 
-1. **Automatic startup, restarts, and database backups.** Use systemd for the bot
-   and dashboard, with journal logs and consistent SQLite backups. Configure
-   retention and verify a restore into a separate scratch database.
-2. **Weekly and monthly leaderboards.** Combined and individual-game views, with
-   explicit period boundaries in each Discord server's timezone. Define how to
-   aggregate daily points and handle scoring changes before implementation.
+1. **Off-host backup copies.** Sync encrypted archives to independent storage
+   and preserve the backup password separately from the server.
+2. **More period leaderboards.** The combined weekly Discord leaderboard is done.
+   Add weekly per-game and monthly combined/per-game views, with explicit period
+   boundaries and a clear rule for any future scoring changes.
 3. **Personal statistics.** A `!stats` command showing participation, wins,
    average scores, and personal bests, separated by game where appropriate.
 4. **Participation streaks.** Consecutive competition days played, current/best
@@ -50,16 +48,15 @@ remains pending. See [DASHBOARD.md](DASHBOARD.md#run-detached) for the commands.
 5. **Optional deadline reminders.** A configurable reminder before cutoff,
    showing missing games. Avoid unsolicited individual mentions by default;
    persist delivery state so restarts do not repeat reminders.
-6. **Daily winner highlights.** Highlight each game's winner alongside the
-   combined daily podium. Preserve ties, failures, pagination, frozen results,
-   and restart-safe posting.
-7. **Clearer rejected-submission feedback.** Review existing feedback and improve
+6. **Clearer rejected-submission feedback.** Review existing feedback and improve
    explanations for duplicates, wrong puzzle dates, unsupported Share text, and
    submissions after cutoff. Provide a useful next step for the player.
 
 ## Already implemented in source
 
 - Combined daily leaderboards and scheduled final boards.
+- Compact daily Discord embeds with a linked results thread, per-game winner
+  highlights, and a combined weekly leaderboard (`!weekly`).
 - Individual game views: `!lb sizeitup`, `!lb timeguessr`, `!lb metazooa`.
 - Date filters and a slash-command game selector.
 - Persistent scores, configuration, and frozen final boards in SQLite.

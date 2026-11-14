@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily encrypted Daily Podium backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+AccuracySec=5min
+Unit=daily-podium-backup.service
+
+[Install]
+WantedBy=timers.target

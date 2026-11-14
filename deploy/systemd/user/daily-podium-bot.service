@@ -1,0 +1,18 @@
+[Unit]
+Description=Daily Podium Discord bot
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/stefan/dev/Daily-Podium
+ExecStart=/home/stefan/dev/Daily-Podium/.venv/bin/python -u -m daily_games
+Restart=always
+RestartSec=15s
+KillSignal=SIGINT
+TimeoutStopSec=45s
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -11,6 +11,8 @@ process. Its [design plan](DASHBOARD_PLAN.md) and other feature ideas in
 [ROADMAP.md](ROADMAP.md) are retained in the repo.
 The separate [public leaderboards](PUBLIC_DASHBOARD.md) provide per-server links
 and a global cross-server board through Tailscale Funnel.
+On the Beelink server, the bot and dashboards run as user systemd services;
+see [SYSTEMD.md](SYSTEMD.md) for restarts, logs, and encrypted backups.
 
 ## Run locally (macOS or Linux/WSL2)
 

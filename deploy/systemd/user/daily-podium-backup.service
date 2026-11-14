@@ -1,0 +1,9 @@
+[Unit]
+Description=Verified encrypted Daily Podium backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/stefan/dev/Daily-Podium
+ExecStart=/home/stefan/dev/Daily-Podium/.venv/bin/python -m daily_games.backup --database /home/stefan/dev/Daily-Podium/data/daily-games.sqlite3 --backup-dir /home/stefan/backups/daily-podium --password-file /home/stefan/dev/Daily-Podium/data/.backup-password --keep-days 30
+UMask=0077
+NoNewPrivileges=true

@@ -5,9 +5,9 @@ Published and checked through Funnel's public HTTPS relay on 2026-11-14:
 - [Global leaderboard](https://bee.tailfa65a1.ts.net:8443/global)
 - [Current community leaderboard](https://bee.tailfa65a1.ts.net:8443/s/8cd43024e1fd10147e12afc9)
 
-The public backend is already running detached. The original Discord bot and
-private dashboard were not stopped or restarted. The next manual bot restart
-will load the browser links in `!lb` and synchronize community display names.
+The public backend currently runs as `daily-podium-public-dashboard.service`.
+The bot and both dashboards are managed by user systemd services; see
+[SYSTEMD.md](SYSTEMD.md). The browser links are active in `!lb`.
 
 The public leaderboard runs as a separate Python process, with a separate HTTP
 API and page from the private operations dashboard. It reads the same SQLite
@@ -19,8 +19,8 @@ database but cannot change scores, settings, or bot processes.
 - `/s/<stable-public-slug>`: one Discord server's leaderboard.
 - The page has a **This server / Global leaderboard** toggle, a community
   selector, game tabs, and date controls. URLs retain the selected date and game.
-- `!lb` and `/leaderboard` include links to both views once public URL
-  configuration exists and the bot has been manually restarted to load this code.
+- `!lb` and `/leaderboard` include links to both views when the public URL
+  configuration exists.
 - Display names are learned from Discord at the bot's next startup and when
   `!lb` is used. Until then, a community has a generic numbered label.
 
@@ -66,6 +66,9 @@ existing service or Tailscale route should be reset to publish these leaderboard
 
 ## Start the public backend
 
+On `bee`, use `systemctl --user restart daily-podium-public-dashboard.service`.
+The manual command below is a fallback only after stopping that service:
+
 ```sh
 cd /home/stefan/dev/Daily-Podium
 nohup .venv/bin/python -u -m daily_games.public_dashboard --port 8766 \
@@ -74,8 +77,7 @@ echo $! > data/public-dashboard.pid
 disown
 ```
 
-Check `data/public-dashboard.pid` and the running process before launching another
-copy. The implementation session may already have started this service.
+Never launch a second copy while the systemd service is active.
 
 The public backend deliberately has no option to bind to the LAN or tailnet. Its
 only listener is loopback; Tailscale Funnel handles public HTTPS.
@@ -110,8 +112,8 @@ configure(database, 'https://bee.tailfa65a1.ts.net:8443')
 PY
 ```
 
-Then restart the **bot manually** when ready so `!lb` loads the new link code.
-Publishing and starting the public backend do not require a bot restart.
+If changing the link configuration, restart only the bot with
+`systemctl --user restart daily-podium-bot.service` to reload it.
 
 ## Runtime files and backups
 
@@ -121,7 +123,8 @@ for the default configuration:
 - `public-links.key`: a local 32-byte secret used to derive stable, opaque server
   URLs. Back it up securely alongside the database; replacing it changes URLs.
 - `public-dashboard.json`: the public HTTPS origin and cached community names.
-- `public-dashboard.log` and `public-dashboard.pid`: detached process output/PID.
+- Old `public-dashboard.log` and `.pid` files came from manual launches; the
+  current service logs to the user journal and uses a systemd-managed PID.
 
 The database remains read-only for dashboard requests. Only the small public-link
 metadata files are created or updated. The application does not load bot process
@@ -135,12 +138,7 @@ Disable only this Funnel listener, preserving unrelated routes:
 tailscale funnel --https=8443 off
 ```
 
-The loopback process may continue running after public access is disabled. To stop
-it too, verify the PID in `data/public-dashboard.pid` belongs to
-`daily_games.public_dashboard`, then send SIGTERM to that PID. Neither action
-requires stopping the Discord bot or private dashboard.
-
-The public backend currently runs detached. Automatic restart at boot and after
-failures remains in [ROADMAP.md](ROADMAP.md)'s systemd TODO. Funnel's `--bg`
-configuration persists independently; the backend must also be running to serve
-pages.
+The loopback backend may continue running after public access is disabled. Stop
+it separately with `systemctl --user stop daily-podium-public-dashboard.service`
+if needed. Neither action stops the Discord bot or private dashboard. Funnel's
+`--bg` configuration persists independently; the backend must run to serve pages.

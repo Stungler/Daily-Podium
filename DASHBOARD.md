@@ -8,6 +8,11 @@ This is the private operations dashboard. For shareable per-server and global
 scoreboards, use the separate [public service](PUBLIC_DASHBOARD.md); never point
 Funnel at this private listener.
 
+On `bee` this dashboard currently runs as `daily-podium-private-dashboard.service`.
+Use [SYSTEMD.md](SYSTEMD.md) for status, restart, logs, and backups. The manual
+commands below are only for development or a deliberate service handover; stop
+the systemd unit before using the same port manually.
+
 ## Start on bee
 
 The dashboard uses aiohttp, already installed by `requirements.lock`. No Node,
@@ -27,8 +32,7 @@ The explicit host binds only to Tailscale. There is no public or LAN listener,
 router forwarding, external hosting, or separate dashboard login. Anyone allowed
 to reach this tailnet endpoint can read all configured servers' dashboard data.
 
-Press Ctrl+C in this dashboard terminal to stop it; the Discord bot keeps running.
-The dashboard has not been started automatically by the implementation.
+Press Ctrl+C in a manual dashboard terminal to stop it; the Discord bot keeps running.
 
 For localhost testing instead:
 
@@ -57,10 +61,9 @@ tail -f /home/stefan/dev/Daily-Podium/data/dashboard.log
 ps -p "$(cat /home/stefan/dev/Daily-Podium/data/dashboard.pid)" -o pid,args
 ```
 
-To stop it, first confirm that the recorded PID still belongs to
+To stop a manually detached copy, first confirm that the recorded PID still belongs to
 `python -m daily_games.dashboard`, then send SIGTERM to that PID. Dashboard and bot
-PIDs are different. Detached operation does not provide automatic restart after a
-crash or reboot; systemd and scheduled backups remain roadmap tasks.
+PIDs are different. The current production instance uses systemd instead.
 
 ## Configuration
 
