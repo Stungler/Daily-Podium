@@ -1,4 +1,4 @@
-# Daily Games
+# Daily Podium
 
 A Python Discord bot for independent daily competitions in each server. Players paste
 their Share results from **TimeGuessr**, **Magnitudle Size It Up (standard)**, and
