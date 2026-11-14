@@ -36,21 +36,19 @@ The services and backup timer are active; see [SYSTEMD.md](SYSTEMD.md).
 
 ### Feature backlog
 
-1. **Personal statistics.** Add a `!stats` command showing participation, wins,
-   average scores, and personal bests, separated by game where appropriate.
-2. **More period leaderboards.** The combined weekly Discord leaderboard is done.
+1. **More period leaderboards.** The combined weekly Discord leaderboard is done.
    Add weekly per-game and monthly combined/per-game views, with explicit period
    boundaries and a clear rule for any future scoring changes.
-3. **Participation streaks.** Consecutive competition days played, current/best
+2. **Participation streaks.** Consecutive competition days played, current/best
    streaks, and optional milestone celebrations. Define whether playing any game
    or all three counts, and handle missing days consistently.
-4. **Optional deadline reminders.** A configurable reminder before cutoff,
+3. **Optional deadline reminders.** A configurable reminder before cutoff,
    showing missing games. Avoid unsolicited individual mentions by default;
    persist delivery state so restarts do not repeat reminders.
-5. **Clearer rejected-submission feedback.** Review existing feedback and improve
+4. **Clearer rejected-submission feedback.** Review existing feedback and improve
    explanations for duplicates, wrong puzzle dates, unsupported Share text, and
    submissions after cutoff. Provide a useful next step for the player.
-6. **Full recovery drill.** Restore a downloaded encrypted backup into an isolated
+5. **Full recovery drill.** Restore a downloaded encrypted backup into an isolated
    scratch checkout and verify stored scores and dashboard reads without using
    the live Discord token or overwriting the active database.
 
@@ -59,6 +57,7 @@ The services and backup timer are active; see [SYSTEMD.md](SYSTEMD.md).
 - Combined daily leaderboards and scheduled final boards.
 - Compact daily Discord embeds with a linked results thread, per-game winner
   highlights, and a combined weekly leaderboard (`!weekly`).
+- Per-player finalized history in Discord with `!stats` / `/stats`.
 - Individual game views: `!lb sizeitup`, `!lb timeguessr`, `!lb metazooa`.
 - Date filters and a slash-command game selector.
 - Persistent scores, configuration, and frozen final boards in SQLite.

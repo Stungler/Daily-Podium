@@ -11,7 +11,15 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from .calendar import active_day, boundary, closes_at, parse_cutoff, post_due_at, validate_timezone
-from .discord_views import MAUVE, compact_boards, daily_highlights, weekly_embed, weekly_snapshot
+from .discord_views import (
+    MAUVE,
+    compact_boards,
+    daily_highlights,
+    player_stats_embed,
+    player_stats_snapshot,
+    weekly_embed,
+    weekly_snapshot,
+)
 from .models import GAME_TITLES, GAME_URLS, Game, ServerConfig
 from .parsers import parse_message
 from .presentation import game_snapshot, make_snapshot, score_label
@@ -542,6 +550,7 @@ class CompetitionCommands(commands.Cog):
                 "`!lb sizeitup` / `timeguessr` / `metazooa` · one game\n"
                 "`!lb yesterday` / `!lb sizeitup 2026-11-13` · another day\n"
                 "`!weekly [day]` · weekly points from finalized days\n"
+                "`!stats [@player]` · personal stats from finalized days\n"
                 "`!games` · play links · `!status` · puzzles and deadline\n"
                 "`!ping` · connection check"
             ),
@@ -741,6 +750,18 @@ class CompetitionCommands(commands.Cog):
             cfg.started_day,
         )
         await ctx.send(embed=weekly_embed(summary))
+
+    @commands.hybrid_command(
+        name="stats", description="Personal stats from this server's finalized days."
+    )
+    @commands.guild_only()
+    @commands.cooldown(1, 5, commands.BucketType.member)
+    async def stats(self, ctx: commands.Context, member: discord.Member | None = None):
+        cfg = self.config(ctx)
+        target = member or ctx.author
+        snapshots = self.bot.store.finalized_snapshots(cfg.guild_id, cfg.started_day, date.max)
+        stats = player_stats_snapshot(snapshots, target.id)
+        await ctx.send(embed=player_stats_embed(stats, target.display_name))
 
     @commands.hybrid_command(
         name="status",

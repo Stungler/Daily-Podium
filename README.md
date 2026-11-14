@@ -116,6 +116,8 @@ then request the standings:
 !lb metazooa 2026-11-13
 !weekly
 !weekly yesterday
+!stats
+!stats @friend
 ```
 
 `/leaderboard` offers `day` and `game` options (All games, TimeGuessr, Size It Up,
@@ -129,6 +131,12 @@ they show the top 10 and link to the full browser view; without links, they pagi
 `!weekly [day]` and `/weekly` show this server's week-to-date points from finalized daily
 snapshots. The week starts Monday in the configured competition calendar. The footer shows
 how many days have been finalized so far.
+`!stats` and `/stats` show your own stats, or another server member's stats when
+selected. They use only this server's finalized days: total and average daily
+points, participation, daily wins, and each game's plays, solves, wins, average
+successful score, and personal best. Tied first places count as wins. A game
+failure counts as a play but not toward the raw-score average; for Metazooa,
+fewer guesses are better. Today's provisional results appear after finalization.
 When public dashboard links are configured, leaderboard replies also link to
 this server's full browser board and the global leaderboard. The global board
 counts each player's earliest accepted submission per game and date across
@@ -146,6 +154,7 @@ in each server's results channel to compete there; results do not automatically 
 | `/games` | `!games` | Links to the three games |
 | `/leaderboard [day] [game]` | `!lb [day] [game]` or `!lb game [day]` | Combined or single-game current, yesterday, or dated board |
 | `/weekly [day]` | `!weekly [day]` | Week-to-date points, days played, and daily wins from finalized boards |
+| `/stats [member]` | `!stats [@member]` | Personal history in this server from finalized days |
 | `/status` | `!status` | Server settings, expected puzzles, daily challenge links and deadline |
 | `/setup` | `!setup #results [#boards] [timezone] [cutoff] [scoring]` | Admin configuration |
 | `/puzzle_date` | `!puzzle_date timeguessr 1262 2026-11-13` | Admin date correction for a numbered puzzle |

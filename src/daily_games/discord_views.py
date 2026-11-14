@@ -173,3 +173,87 @@ def weekly_embed(summary):
         )
     )
     return embed
+
+
+def player_stats_snapshot(snapshots: list[dict], user_id: int) -> dict:
+    """Summarize one player's finalized results in one Discord server."""
+    games = {
+        game.value: {"played": 0, "solved": 0, "wins": 0, "points": 0, "score_sum": 0, "best": None}
+        for game in Game
+    }
+    result = {
+        "finalized_days": len(snapshots),
+        "days_played": 0,
+        "daily_wins": 0,
+        "points": 0,
+        "last_day": None,
+        "games": games,
+    }
+    for snapshot in sorted(snapshots, key=lambda item: item["day"]):
+        player = next((row for row in snapshot["rows"] if row["user_id"] == user_id), None)
+        if player is None:
+            continue
+        result["days_played"] += 1
+        result["daily_wins"] += int(player["rank"] == 1 and player["total"] > 0)
+        result["points"] += player["total"]
+        result["last_day"] = snapshot["day"]
+        for game in Game:
+            entry = player["games"].get(game.value)
+            if entry is None:
+                continue
+            game_stats = games[game.value]
+            game_stats["played"] += 1
+            game_stats["points"] += entry["points"]
+            if not entry["solved"]:
+                continue
+            score = entry["score"]
+            game_stats["solved"] += 1
+            game_stats["score_sum"] += score
+            best = game_stats["best"]
+            better_score = best is None or (score < best if game == Game.METAZOOA else score > best)
+            if better_score:
+                game_stats["best"] = score
+            projected = game_snapshot(snapshot, game)
+            game_stats["wins"] += int(
+                any(row["user_id"] == user_id and row["rank"] == 1 for row in projected["rows"])
+            )
+    return result
+
+
+def player_stats_embed(stats: dict, display_name: str) -> discord.Embed:
+    if stats["days_played"]:
+        average = stats["points"] / stats["days_played"]
+        description = (
+            f"**{stats['days_played']}/{stats['finalized_days']}** days played · "
+            f"**{stats['daily_wins']}** daily wins\n"
+            f"**{stats['points']}** total points · **{average:.1f}** points per played day\n"
+            f"Last played: {stats['last_day']}"
+        )
+    else:
+        description = "No results in finalized days for this player yet."
+    embed = discord.Embed(
+        title=f"Player stats · {player_name(display_name)}",
+        description=description,
+        color=MAUVE,
+    )
+    for game in Game:
+        data = stats["games"][game.value]
+        if not data["played"]:
+            value = "No finalized results yet."
+        else:
+            if data["solved"]:
+                unit = " guesses" if game == Game.METAZOOA else ""
+                average = f"{data['score_sum'] / data['solved']:,.1f}{unit}"
+                best = f"{data['best']:,}{unit}"
+            else:
+                average = best = "—"
+            value = (
+                f"**{data['played']}** played · **{data['solved']}** solved · "
+                f"**{data['wins']}** wins\n"
+                f"{data['points']} pts · avg {average} · best {best}"
+            )
+        embed.add_field(name=GAME_TITLES[game], value=value, inline=False)
+    embed.set_footer(
+        text="This server · finalized days only · ties count as wins · score averages use solves"
+    )
+    return embed
