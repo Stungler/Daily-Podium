@@ -8,6 +8,7 @@ The Beelink runs these **user** units as `stefan` (no `sudo` for routine command
 | `daily-podium-private-dashboard.service` | Tailnet-only dashboard at `100.118.9.35:8765` |
 | `daily-podium-public-dashboard.service` | Loopback backend at `127.0.0.1:8766` for Funnel |
 | `daily-podium-backup.timer` | Daily encrypted backup at 03:30 Europe/Berlin |
+| `daily-podium-offsite.timer` | Daily Google Drive copy and checksum check at 04:00 |
 
 The units are versioned in `deploy/systemd/user/` and linked into
 `~/.config/systemd/user/`. `loginctl show-user stefan -p Linger` reports `yes`, so
@@ -22,7 +23,7 @@ the public backend remains bound to loopback only.
 systemctl --user status daily-podium-bot.service
 systemctl --user status daily-podium-private-dashboard.service
 systemctl --user status daily-podium-public-dashboard.service
-systemctl --user list-timers daily-podium-backup.timer
+systemctl --user list-timers daily-podium-backup.timer daily-podium-offsite.timer
 journalctl --user -u daily-podium-bot.service -f
 ```
 
@@ -47,15 +48,18 @@ and `data/public-dashboard.json` when present. Keeping the public-link key
 preserves the existing per-server dashboard URLs after restore. Before an
 archive is published, the job decrypts it into a private temporary directory,
 checks file hashes, and runs SQLite `integrity_check` on the restored copy.
-It retains successful archives for 30 days.
+It retains successful local archives for 30 days. At 04:00,
+`daily-podium-offsite.timer` copies the encrypted archives to
+`gdrive:daily-podium-backups` and checks remote checksums. Older remote copies
+are retained; the sync does not delete them. The service retries failed uploads.
 
 Archives are under `/home/stefan/backups/daily-podium/` (directory mode 700,
 files mode 600). They use OpenSSL AES-256-CBC with PBKDF2 and 200,000 iterations.
 The separate password is `data/.backup-password` (mode 600), outside Git and
 **not included in the archives**. Store a secure copy of this password away
-from `bee`; losing it makes the archives unusable. The archives are currently on
-the same SSD as the live database, so also copy the encrypted archives to
-another device or off-host storage for disk-failure recovery.
+from `bee`; losing it makes the archives unusable. Local archives share the SSD
+with the database, while verified encrypted copies are also on Google Drive.
+The password is **not** uploaded with them.
 
 Run and inspect a backup on demand:
 
@@ -63,6 +67,8 @@ Run and inspect a backup on demand:
 systemctl --user start daily-podium-backup.service
 journalctl --user -u daily-podium-backup.service -n 20 --no-pager
 ls -lh /home/stefan/backups/daily-podium/
+systemctl --user start daily-podium-offsite.service
+journalctl --user -u daily-podium-offsite.service -n 20 --no-pager
 ```
 
 To inspect a selected archive in scratch space without touching live data:

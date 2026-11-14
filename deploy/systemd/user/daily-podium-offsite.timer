@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Podium offsite backup check
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+AccuracySec=5min
+Unit=daily-podium-offsite.service
+
+[Install]
+WantedBy=timers.target

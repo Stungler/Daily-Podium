@@ -1,0 +1,13 @@
+[Unit]
+Description=Copy verified Daily Podium archives to Google Drive
+After=network-online.target daily-podium-backup.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash /home/stefan/dev/Daily-Podium/scripts/sync-backups-to-gdrive.sh
+Restart=on-failure
+RestartSec=30min
+TimeoutStartSec=30min
+UMask=0077
+NoNewPrivileges=true

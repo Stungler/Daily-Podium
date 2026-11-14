@@ -28,29 +28,31 @@ Status: implemented and running as a systemd user service. See
   avoiding duplicate bot processes and preserving stored scores and settings.
 - [x] Schedule consistent SQLite backups separately, with retention and a tested
   restore into a scratch database.
-- [ ] Copy encrypted archives and the separate password to independent/off-host
-  storage so an SSD or host failure does not destroy the only copy.
+- [x] Copy and checksum-check encrypted archives on Google Drive each day.
+- [x] Save the separate decryption password outside `bee` (user confirmed
+  Bitwarden storage on 2026-11-14).
 
 The services and backup timer are active; see [SYSTEMD.md](SYSTEMD.md).
 
 ### Feature backlog
 
-1. **Off-host backup copies.** Sync encrypted archives to independent storage
-   and preserve the backup password separately from the server.
+1. **Personal statistics.** Add a `!stats` command showing participation, wins,
+   average scores, and personal bests, separated by game where appropriate.
 2. **More period leaderboards.** The combined weekly Discord leaderboard is done.
    Add weekly per-game and monthly combined/per-game views, with explicit period
    boundaries and a clear rule for any future scoring changes.
-3. **Personal statistics.** A `!stats` command showing participation, wins,
-   average scores, and personal bests, separated by game where appropriate.
-4. **Participation streaks.** Consecutive competition days played, current/best
+3. **Participation streaks.** Consecutive competition days played, current/best
    streaks, and optional milestone celebrations. Define whether playing any game
    or all three counts, and handle missing days consistently.
-5. **Optional deadline reminders.** A configurable reminder before cutoff,
+4. **Optional deadline reminders.** A configurable reminder before cutoff,
    showing missing games. Avoid unsolicited individual mentions by default;
    persist delivery state so restarts do not repeat reminders.
-6. **Clearer rejected-submission feedback.** Review existing feedback and improve
+5. **Clearer rejected-submission feedback.** Review existing feedback and improve
    explanations for duplicates, wrong puzzle dates, unsupported Share text, and
    submissions after cutoff. Provide a useful next step for the player.
+6. **Full recovery drill.** Restore a downloaded encrypted backup into an isolated
+   scratch checkout and verify stored scores and dashboard reads without using
+   the live Discord token or overwriting the active database.
 
 ## Already implemented in source
 
