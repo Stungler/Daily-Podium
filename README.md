@@ -67,8 +67,11 @@ Open https://discord.com/developers/applications and select the bot.
 1. **Bot:** enable Message Content Intent. Presence and Server Members intents are not needed.
 2. **Installation:** Guild Install checked, User Install unchecked.
 3. **Guild Install scopes:** `bot`, `applications.commands`.
-4. Permissions: View Channels, Send Messages, Read Message History, Add Reactions, Embed Links.
-   These must also be allowed by the chosen channels' permission overwrites.
+4. Permissions: View Channels, Send Messages, Read Message History, Add Reactions, Embed Links,
+   Create Public Threads, and Send Messages in Threads. These must also be allowed by the chosen
+   channels' permission overwrites. For an existing installation, update the bot's role and
+   the board channel permissions; update Guild Install permissions in the Developer Portal
+   for future invites. No new privileged intent is needed for threads.
 5. Open the installation link and choose the server. Repeat for additional servers.
 6. For other server administrators to install the bot, enable **Public Bot** on its Bot page.
 7. Leave **Interactions Endpoint URL** empty: this bot receives commands through the Gateway.
@@ -109,6 +112,8 @@ then request the standings:
 !lb metazooa
 !lb sizeitup yesterday
 !lb metazooa 2026-11-13
+!weekly
+!weekly yesterday
 ```
 
 `/leaderboard` offers `day` and `game` options (All games, TimeGuessr, Size It Up,
@@ -117,6 +122,11 @@ Single-game boards show only that game's participants, ranked by its awarded poi
 shared ranks for ties. Points match the combined board, including placement scoring.
 Historical boards use the saved final snapshot; viewing a game does not change it or the
 combined daily posts. No database migration or new setup is required.
+Leaderboard replies use compact aligned embeds. With public dashboard links configured,
+they show the top 10 and link to the full browser view; without links, they paginate all players.
+`!weekly [day]` and `/weekly` show this server's week-to-date points from finalized daily
+snapshots. The week starts Monday in the configured competition calendar. The footer shows
+how many days have been finalized so far.
 When public dashboard links are configured, leaderboard replies also link to
 this server's full browser board and the global leaderboard. The global board
 counts each player's earliest accepted submission per game and date across
@@ -133,6 +143,7 @@ in each server's results channel to compete there; results do not automatically 
 | `/help` | `!help` | Instructions |
 | `/games` | `!games` | Links to the three games |
 | `/leaderboard [day] [game]` | `!lb [day] [game]` or `!lb game [day]` | Combined or single-game current, yesterday, or dated board |
+| `/weekly [day]` | `!weekly [day]` | Week-to-date points, days played, and daily wins from finalized boards |
 | `/status` | `!status` | Server settings, expected puzzles, daily challenge links and deadline |
 | `/setup` | `!setup #results [#boards] [timezone] [cutoff] [scoring]` | Admin configuration |
 | `/puzzle_date` | `!puzzle_date timeguessr 1262 2026-11-13` | Admin date correction for a numbered puzzle |
@@ -206,12 +217,17 @@ History contains only a message's latest edited content. Unrecorded edited messa
 during recovery because their original score/time cannot be established. Repost an unedited
 Share result while the day is open. Results already stored remain unchanged by later edits.
 
-Daily boards are frozen to durable snapshots, then posted. A saved message ID prevents repeated
-posts. After a crash or ambiguous send timeout, the bot looks for its deterministic board
-footer in channel history before retrying, including individual pages of a large board.
+Daily boards are frozen to durable snapshots, then posted. The final board is one compact embed
+in the board channel. A public thread attached to that message holds game highlights, the full
+per-player results, and a weekly summary. The detail content and its delivery state are saved
+in SQLite, so a restart resumes incomplete threads without changing the frozen scores.
+If the bot lacks thread permissions, the main board still posts; thread delivery is retried
+after permissions are granted. A saved message ID prevents repeated main posts. After a crash
+or ambiguous send timeout, the bot looks for its deterministic board footer in channel history
+before retrying. Existing boards posted before this feature keep their original format.
 This reduces duplicate posting; Discord and SQLite do not provide an atomic transaction across
 both systems, so strict exactly-once delivery cannot be guaranteed under every network failure.
-Read Message History permission is needed on the output channel for reconciliation.
+Read Message History permission is needed on the output channel and in threads for reconciliation.
 
 A failed recovery prevents finalization rather than freezing an incomplete board. Failures
 are logged and retried. Backlogged competition days are processed when the bot comes back.
@@ -233,6 +249,7 @@ src/daily_games/
   service.py       Submission eligibility and duplicate rules
   scoring.py       Per-game points and combined ranks
   presentation.py  Stable, serializable leaderboard snapshots
+  discord_views.py Compact Discord embeds, daily highlights, weekly summaries
   bot.py          Discord commands, messages, recovery and daily posting
   __main__.py     Environment, single-process lock and startup
 ```

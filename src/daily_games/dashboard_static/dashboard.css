@@ -1,13 +1,29 @@
+/* Catppuccin Mocha — https://catppuccin.com/palette/ */
 :root {
   color-scheme:dark;
-  --bg:#111410;
-  --panel:#191d18;
-  --line:#30362c;
-  --text:#f1f1e7;
-  --muted:#9aab94;
-  --accent:#d9ee8b;
-  --green:#b9dfa1;
-  --orange:#e8c27f;
+  --bg:#181825;
+  --panel:#1e1e2e;
+  --line:#313244;
+  --text:#cdd6f4;
+  --muted:#a6adc8;
+  --accent:#cba6f7;
+  --green:#a6e3a1;
+  --orange:#f9e2af;
+  --surface:#313244;
+  --surface-hover:#45475a;
+  --surface-border:#585b70;
+  --on-accent:#11111b;
+  --on-accent-muted:#313244;
+  --accent-soft:#cba6f71c;
+  --accent-border:#cba6f755;
+  --green-soft:#a6e3a11c;
+  --green-glow:#a6e3a133;
+  --green-halo:#a6e3a110;
+  --yellow-soft:#f9e2af1c;
+  --yellow-border:#f9e2af55;
+  --blue:#89b4fa;
+  --blue-soft:#89b4fa1c;
+  --accent-decoration:#11111b0c;
   --radius:16px;
   font-family:Inter,"Segoe UI",system-ui,-apple-system,sans-serif;
   font-synthesis:none;
@@ -62,7 +78,7 @@ a {
 }
 .brandmark {
   background:var(--accent);
-  color:#192015;
+  color:var(--on-accent);
   width:45px;
   height:45px;
   border-radius:12px;
@@ -108,7 +124,7 @@ a {
   height:6px;
   border-radius:50%;
   background:var(--green);
-  box-shadow:0 0 10px #b9dfa133;
+  box-shadow:0 0 10px var(--green-glow);
 }
 .host-label {
   border-left:1px solid var(--line);
@@ -169,8 +185,8 @@ h3 {
   color:var(--muted);
 }
 select,input {
-  background:#21261e;
-  border:1px solid #3c4435;
+  background:var(--surface);
+  border:1px solid var(--surface-border);
   border-radius:8px;
   padding:10px 30px 10px 12px;
   max-width:100%;
@@ -243,20 +259,20 @@ input {
 .accent-card {
   background:var(--accent);
   border-color:var(--accent);
-  color:#202719;
+  color:var(--on-accent);
 }
 .accent-card:after {
   content:"";
   width:115px;
   height:115px;
-  border:20px solid #2027190c;
+  border:20px solid var(--accent-decoration);
   position:absolute;
   right:-30px;
   top:-25px;
   border-radius:50%;
 }
 .accent-card .stat-label,.accent-card .stat-foot {
-  color:#4c593b;
+  color:var(--on-accent-muted);
 }
 .main-grid {
   display:grid;
@@ -283,9 +299,9 @@ input {
 }
 .badge {
   padding:5px 9px;
-  border:1px solid #506143;
+  border:1px solid var(--accent-border);
   border-radius:5px;
-  background:#293321;
+  background:var(--accent-soft);
   color:var(--accent);
   font-size:9px;
   white-space:nowrap;
@@ -293,12 +309,12 @@ input {
   text-transform:uppercase;
 }
 .badge.final {
-  background:#263122;
-  color:#b7d7a6;
+  background:var(--green-soft);
+  color:var(--green);
 }
 .badge.pending {
-  background:#3c3321;
-  border-color:#68583a;
+  background:var(--yellow-soft);
+  border-color:var(--yellow-border);
   color:var(--orange);
 }
 .board-tools {
@@ -323,11 +339,11 @@ input {
   white-space:nowrap;
 }
 .tab:hover {
-  background:#242c20;
+  background:var(--surface-hover);
   color:var(--text);
 }
 .tab.active {
-  background:#303b26;
+  background:var(--accent-soft);
   color:var(--accent);
 }
 .date-controls {
@@ -346,7 +362,7 @@ input {
   overflow-x:auto;
   max-height:580px;
   scrollbar-width:thin;
-  scrollbar-color:#526244 transparent;
+  scrollbar-color:var(--surface-border) transparent;
 }
 table {
   width:100%;
@@ -365,7 +381,7 @@ th {
 }
 td {
   padding:17px 8px;
-  border-bottom:1px solid #2b3226;
+  border-bottom:1px solid var(--line);
   font-size:12px;
 }
 tbody tr:last-child td {
@@ -386,8 +402,8 @@ td:first-child {
   font-variant-numeric:tabular-nums;
 }
 .rank.top {
-  background:#d9ee8b1c;
-  border:1px solid #a1b86655;
+  background:var(--accent-soft);
+  border:1px solid var(--accent-border);
   border-radius:6px;
   color:var(--accent);
 }
@@ -409,21 +425,21 @@ td:first-child {
   border-radius:9px;
   display:grid;
   place-items:center;
-  background:#303e2b;
-  color:#d0e7bf;
+  background:var(--green-soft);
+  color:var(--green);
   font-size:10px;
 }
 .avatar.tone-1 {
-  background:#3a353e;
-  color:#d9c7e5;
+  background:var(--accent-soft);
+  color:var(--accent);
 }
 .avatar.tone-2 {
-  background:#3c3627;
-  color:#e6d5ae;
+  background:var(--yellow-soft);
+  color:var(--orange);
 }
 .avatar.tone-3 {
-  background:#26393d;
-  color:#b2d9e4;
+  background:var(--blue-soft);
+  color:var(--blue);
 }
 .score {
   font-variant-numeric:tabular-nums;
@@ -469,7 +485,7 @@ td:first-child {
 }
 .health-light.running {
   background:var(--green);
-  box-shadow:0 0 0 5px #b9dfa110;
+  box-shadow:0 0 0 5px var(--green-halo);
 }
 .status-list {
   margin:0;
@@ -479,7 +495,7 @@ td:first-child {
   justify-content:space-between;
   gap:15px;
   padding:10px 0;
-  border-bottom:1px solid #2b3226;
+  border-bottom:1px solid var(--line);
   font-size:11px;
 }
 .status-list>div:last-child {
@@ -532,11 +548,11 @@ progress {
   border:none;
   border-radius:5px;
   overflow:hidden;
-  background:#2c3527;
+  background:var(--surface);
   accent-color:var(--accent);
 }
 progress::-webkit-progress-bar {
-  background:#2c3527;
+  background:var(--surface);
 }
 progress::-webkit-progress-value {
   background:var(--accent);
@@ -565,7 +581,7 @@ progress::-moz-progress-bar {
 }
 .activity-row {
   padding:13px 0;
-  border-bottom:1px solid #2b3226;
+  border-bottom:1px solid var(--line);
   display:grid;
   grid-template-columns:minmax(0,1fr) auto;
   gap:12px;
@@ -600,7 +616,7 @@ progress::-moz-progress-bar {
   align-items:center;
   gap:8px;
   padding:13px 0;
-  border-bottom:1px solid #2b3226;
+  border-bottom:1px solid var(--line);
 }
 .history-row:last-child {
   border-bottom:0;
@@ -611,7 +627,7 @@ progress::-moz-progress-bar {
   padding:2px 0;
   font-size:12px;
   text-decoration:underline;
-  text-decoration-color:#687c51;
+  text-decoration-color:var(--accent);
   text-underline-offset:4px;
 }
 .history-row .badge {
@@ -638,9 +654,9 @@ progress::-moz-progress-bar {
   padding:25px 15px;
 }
 .notice {
-  border:1px solid #77643c;
-  background:#302b1e;
-  color:#efd5a2;
+  border:1px solid var(--yellow-border);
+  background:var(--yellow-soft);
+  color:var(--orange);
   border-radius:8px;
   padding:13px 16px;
   font-size:12px;
@@ -653,7 +669,7 @@ progress::-moz-progress-bar {
   margin-top:35px;
   border-top:1px solid var(--line);
   padding:20px 0;
-  color:#7e8c77;
+  color:var(--muted);
   font-size:10px;
 }
 .page-footer strong {

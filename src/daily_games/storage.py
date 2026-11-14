@@ -58,6 +58,18 @@ class Store:
                 message_id INTEGER,
                 PRIMARY KEY(guild_id, day)
             );
+            CREATE TABLE IF NOT EXISTS board_details (
+                guild_id INTEGER NOT NULL,
+                day TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                thread_id INTEGER,
+                attempted_at TEXT,
+                retry_at TEXT,
+                complete INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(guild_id, day),
+                FOREIGN KEY(guild_id, day) REFERENCES boards(guild_id, day)
+            );
+            INSERT OR IGNORE INTO schema_version VALUES (2);
             CREATE TABLE IF NOT EXISTS puzzle_dates (
                 guild_id INTEGER NOT NULL REFERENCES servers(guild_id),
                 game TEXT NOT NULL,
@@ -233,6 +245,53 @@ class Store:
     def cursor(self, guild_id: int) -> int | None:
         row = self.db.execute("SELECT cursor FROM servers WHERE guild_id=?", (guild_id,)).fetchone()
         return row[0] if row else None
+
+    def finalized_snapshots(self, guild_id: int, start: date, end: date) -> list[dict]:
+        return [
+            json.loads(row[0])
+            for row in self.db.execute(
+                "SELECT snapshot FROM boards WHERE guild_id=? AND day BETWEEN ? AND ? ORDER BY day",
+                (guild_id, start.isoformat(), end.isoformat()),
+            )
+        ]
+
+    def details(self, guild_id: int, day: date) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT * FROM board_details WHERE guild_id=? AND day=?",
+            (guild_id, day.isoformat()),
+        ).fetchone()
+
+    def plan_details(self, guild_id: int, day: date, payload: dict):
+        with self.db:
+            self.db.execute(
+                "INSERT OR IGNORE INTO board_details(guild_id,day,payload) VALUES (?,?,?)",
+                (guild_id, day.isoformat(), json.dumps(payload)),
+            )
+
+    def update_details(
+        self,
+        guild_id: int,
+        day: date,
+        *,
+        thread_id=None,
+        attempted_at=None,
+        retry_at=None,
+        complete=False,
+    ):
+        with self.db:
+            self.db.execute(
+                "UPDATE board_details SET thread_id=COALESCE(?,thread_id), "
+                "attempted_at=COALESCE(attempted_at,?), retry_at=?, complete=? "
+                "WHERE guild_id=? AND day=?",
+                (
+                    thread_id,
+                    attempted_at.isoformat() if attempted_at else None,
+                    retry_at.isoformat() if retry_at else None,
+                    int(complete),
+                    guild_id,
+                    day.isoformat(),
+                ),
+            )
 
     def advance_cursor(self, guild_id: int, message_id: int):
         with self.db:

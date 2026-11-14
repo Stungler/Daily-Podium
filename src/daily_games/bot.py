@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from .calendar import active_day, boundary, closes_at, parse_cutoff, post_due_at, validate_timezone
+from .discord_views import MAUVE, compact_boards, daily_highlights, weekly_embed, weekly_snapshot
 from .models import GAME_TITLES, GAME_URLS, Game, ServerConfig
 from .parsers import parse_message
 from .presentation import game_snapshot, make_snapshot, score_label
@@ -289,13 +290,88 @@ class DailyGamesBot(commands.Bot):
 
     async def publish_locked(self, cfg: ServerConfig, day: date, now: datetime):
         board = self.store.board(cfg.guild_id, day)
-        if board is None or board["message_id"] is not None:
+        if board is None:
+            return
+        details = self.store.details(cfg.guild_id, day)
+        if board["message_id"] is not None:
+            if details:
+                await self.publish_details_safely(cfg, day, now)
             return
         channel = self.get_channel(board["output_channel_id"])
         if not isinstance(channel, discord.TextChannel) or channel.guild.id != cfg.guild_id:
             raise ValueError("Daily board channel is unavailable.")
         snapshot = json.loads(board["snapshot"])
-        embeds = board_embeds(snapshot, cfg.guild_id, final=True, scheduled=True)
+        if details is None and board["attempted_at"] is None:
+            summary = compact_boards(snapshot, final=True, scheduled=True, limit=10)[0]
+            database = self.store.db.execute("PRAGMA database_list").fetchone()[2]
+            guild = self.get_guild(cfg.guild_id)
+            links = (
+                leaderboard_links(
+                    Path(database),
+                    cfg.guild_id,
+                    getattr(guild, "name", "Daily Games"),
+                    day.isoformat(),
+                    "all",
+                )
+                if database
+                else None
+            )
+            if links:
+                summary.description = summary.description.replace(
+                    "full standings: `!lb`", "full standings in the browser"
+                )
+                summary.add_field(
+                    name="Full leaderboard in your browser",
+                    value=(
+                        f"[This server]({links['server']}) · "
+                        f"[Global leaderboard]({links['global']})"
+                    ),
+                    inline=False,
+                )
+            monday = day - timedelta(days=day.weekday())
+            weekly = weekly_snapshot(
+                self.store.finalized_snapshots(cfg.guild_id, monday, day),
+                day,
+                cfg.started_day,
+            )
+            extra_embeds = (
+                [
+                    daily_highlights(snapshot),
+                    *board_embeds(
+                        snapshot,
+                        cfg.guild_id,
+                        final=True,
+                    ),
+                    weekly_embed(weekly),
+                ]
+                if snapshot["rows"]
+                else []
+            )
+            for index, embed in enumerate(extra_embeds, start=1):
+                embed.color = MAUVE
+                # Keep the weekly coverage explanation when adding the reconciliation marker.
+                prior_footer = embed.footer.text or ""
+                embed.set_footer(
+                    text=(
+                        f"Daily Podium · {day} · Details {index}/{len(extra_embeds)}"
+                        + (f" · {prior_footer}" if embed.title.startswith("This week") else "")
+                    )
+                )
+            self.store.plan_details(
+                cfg.guild_id,
+                day,
+                {
+                    "summary": summary.to_dict(),
+                    "embeds": [embed.to_dict() for embed in extra_embeds],
+                },
+            )
+            details = self.store.details(cfg.guild_id, day)
+        # Already-attempted old boards retain their previous layout and page markers.
+        embeds = (
+            [discord.Embed.from_dict(json.loads(details["payload"])["summary"])]
+            if details
+            else (board_embeds(snapshot, cfg.guild_id, final=True, scheduled=True))
+        )
         marker = board_marker(cfg.guild_id, day)
         # If a send timed out or we crashed after Discord accepted it, find the existing post.
         # Check each page separately: a crash partway through a large board resumes its pages.
@@ -309,7 +385,9 @@ class DailyGamesBot(commands.Bot):
                     continue
                 for embed in message.embeds:
                     footer = embed.footer.text or ""
-                    if footer.startswith(marker + " · page "):
+                    if footer.startswith(marker + " · page ") or any(
+                        footer == planned.footer.text for planned in embeds
+                    ):
                         found[footer] = message.id
         if not board["attempted_at"]:
             self.store.mark_attempt(cfg.guild_id, day, now)
@@ -325,6 +403,87 @@ class DailyGamesBot(commands.Bot):
             last_id = message.id
         self.store.mark_posted(cfg.guild_id, day, last_id)
         log.info("Daily board posted/reconciled: server=%s day=%s", cfg.guild_id, day)
+        if details:
+            await self.publish_details_safely(cfg, day, now)
+
+    async def publish_details_safely(self, cfg: ServerConfig, day: date, now: datetime):
+        details = self.store.details(cfg.guild_id, day)
+        if details is None or details["complete"]:
+            return
+        if details["retry_at"] and datetime.fromisoformat(details["retry_at"]) > now:
+            return
+        try:
+            await self.publish_details_locked(cfg, day, now)
+        except Exception:
+            # Optional thread delivery must not prevent subsequent daily boards being posted.
+            self.store.update_details(cfg.guild_id, day, retry_at=now + timedelta(minutes=15))
+            log.exception(
+                "Daily detail thread unavailable for server=%s day=%s; retry in 15m",
+                cfg.guild_id,
+                day,
+            )
+
+    async def publish_details_locked(self, cfg: ServerConfig, day: date, now: datetime):
+        board = self.store.board(cfg.guild_id, day)
+        details = self.store.details(cfg.guild_id, day)
+        payload = json.loads(details["payload"])
+        if not payload["embeds"]:
+            self.store.update_details(cfg.guild_id, day, complete=True)
+            return
+        channel = self.get_channel(board["output_channel_id"])
+        if not isinstance(channel, discord.TextChannel) or channel.guild.id != cfg.guild_id:
+            raise ValueError("Daily board channel is unavailable.")
+        permissions = channel.permissions_for(channel.guild.me)
+        required = (
+            "create_public_threads",
+            "send_messages_in_threads",
+            "read_message_history",
+            "embed_links",
+        )
+        if any(not getattr(permissions, name) for name in required):
+            raise ValueError(
+                "Daily details need Create Public Threads, Send Messages in Threads, "
+                "Read Message History, and Embed Links in the board channel."
+            )
+        # A message-started thread has the parent's message ID, even after an ambiguous timeout.
+        thread_id = details["thread_id"] or board["message_id"]
+        thread = self.get_channel(thread_id)
+        if thread is None:
+            try:
+                thread = await self.fetch_channel(thread_id)
+            except discord.NotFound:
+                thread = await channel.create_thread(
+                    name=f"Daily Podium · {day} · results & weekly stats",
+                    message=discord.Object(id=board["message_id"]),
+                    auto_archive_duration=1440,
+                    reason="Daily standings details",
+                )
+        if (
+            not isinstance(thread, discord.Thread)
+            or thread.guild.id != cfg.guild_id
+            or thread.parent_id != channel.id
+        ):
+            raise ValueError("Daily details thread does not match its parent channel.")
+        if thread.locked:
+            raise ValueError("Daily details thread is locked by a moderator.")
+        if thread.archived:
+            await thread.edit(archived=False)
+        self.store.update_details(cfg.guild_id, day, thread_id=thread.id, attempted_at=now)
+        found = set()
+        if details["attempted_at"]:
+            attempt = datetime.fromisoformat(details["attempted_at"])
+            async for message in thread.history(
+                limit=None, after=attempt - timedelta(seconds=5), oldest_first=True
+            ):
+                if message.author.id == self.user.id:
+                    found.update(embed.footer.text for embed in message.embeds)
+        for item in payload["embeds"]:
+            embed = discord.Embed.from_dict(item)
+            if embed.footer.text not in found:
+                await thread.send(
+                    embed=embed, allowed_mentions=discord.AllowedMentions.none(), silent=True
+                )
+        self.store.update_details(cfg.guild_id, day, complete=True)
 
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
         if isinstance(error, commands.CommandNotFound):
@@ -374,30 +533,50 @@ class CompetitionCommands(commands.Cog):
 
     @commands.hybrid_command(name="help", description="Show Daily Games commands and scoring.")
     async def help_command(self, ctx: commands.Context):
-        await ctx.send(
-            "**Daily Games**\n"
-            "Paste TimeGuessr, standard Size It Up, or Metazooa Share text "
-            "in the results channel.\n"
-            "`/leaderboard` or `!lb` — current combined standings\n"
-            "`!lb yesterday` or `!lb 2026-11-13` — another day\n"
-            "`!lb sizeitup`, `!lb timeguessr`, `!lb metazooa` — one game\n"
-            "`!lb sizeitup yesterday` — one game on another day\n"
-            "`/leaderboard` also offers a game selector.\n"
-            "`/status` or `!status` — settings, current puzzles, play links and deadline\n"
-            "`/games` or `!games` — play links\n"
-            "`/ping` or `!ping` — connection check\n\n"
-            "One entry per player/game/puzzle **in each server**. First submission counts. "
-            "Editing/deleting a message does not replace it. Failures earn 0; missing games "
-            "earn 0. Standings are provisional until the daily cutoff. The final board posts "
-            "five minutes later. Pasted scores are self-reported.\n\n"
-            "**Admins (Manage Server):** `/setup`, `/puzzle_date`, `/void_result`. "
-            "These also work with `!`. Use `/` to see their arguments.",
-            ephemeral=True,
+        embed = discord.Embed(
+            title="Daily Podium · quick guide",
+            color=MAUVE,
+            description=(
+                "Play a game and paste its **Share** result in the results channel.\n"
+                "`!lb` · standings and browser links\n"
+                "`!lb sizeitup` / `timeguessr` / `metazooa` · one game\n"
+                "`!lb yesterday` / `!lb sizeitup 2026-11-13` · another day\n"
+                "`!weekly [day]` · weekly points from finalized days\n"
+                "`!games` · play links · `!status` · puzzles and deadline\n"
+                "`!ping` · connection check"
+            ),
         )
+        embed.add_field(
+            name="Competition",
+            value=(
+                "First accepted result per player/game counts. "
+                "Edits and reposts do not improve it. "
+                "Failures and missing games score zero; ties share rank. "
+                "Daily results post five minutes after cutoff, with details and weekly stats "
+                "in a thread."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Admins · Manage Server",
+            value=(
+                "`!setup #results` · `/puzzle_date` · `/void_result`\n"
+                "All commands also have slash versions; `/leaderboard` has day and game selectors."
+            ),
+            inline=False,
+        )
+        await ctx.send(embed=embed, ephemeral=True)
 
     @commands.hybrid_command(name="games", description="Links to the three daily games.")
     async def games(self, ctx: commands.Context):
-        await ctx.send("\n".join(f"{GAME_TITLES[game]}: <{GAME_URLS[game]}>" for game in Game))
+        await ctx.send(
+            embed=discord.Embed(
+                title="Today's games",
+                color=MAUVE,
+                description=" · ".join(f"[{GAME_TITLES[game]}]({GAME_URLS[game]})" for game in Game)
+                + "\nPlay, then paste your **Share** result in the results channel.",
+            )
+        )
 
     @commands.hybrid_command(name="setup", description="Configure this server's daily competition.")
     @commands.guild_only()
@@ -457,16 +636,32 @@ class CompetitionCommands(commands.Cog):
         async with self.bot.guild_locks[cfg.guild_id]:
             self.bot.store.configure(cfg, ctx.author.id)
             self.bot.needs_recovery.add(cfg.guild_id)
-        await ctx.send(
-            f"Competition configured for **this server**.\n"
-            f"Results: {results_channel.mention} · Daily board: {board_channel.mention}\n"
-            f"Timezone: `{timezone}` · Cutoff: `{cutoff}` · Post: 5 minutes later\n"
-            f"Scoring: `{scoring}` · Use `!lb` or `/leaderboard` to see standings.\n"
-            "Earlier messages from the current competition day will be imported. "
-            "After the first recorded result, timezone/cutoff/scoring are locked "
-            "to protect history.",
-            ephemeral=True,
+        embed = discord.Embed(
+            title="Competition configured",
+            color=MAUVE,
+            description=(
+                f"**Results:** {results_channel.mention} · **Boards:** {board_channel.mention}\n"
+                f"**Cutoff:** {cutoff} ({timezone}) · post five minutes later\n"
+                f"**Scoring:** {scoring} · `!lb` for standings · `!weekly` for weekly stats"
+            ),
         )
+        permissions = board_channel.permissions_for(ctx.guild.me)
+        if not permissions.create_public_threads or not permissions.send_messages_in_threads:
+            embed.add_field(
+                name="Optional detail threads",
+                value=(
+                    "Allow **Create Public Threads** and **Send Messages in Threads** "
+                    "in the board channel for full results and weekly summaries below daily posts."
+                ),
+                inline=False,
+            )
+        embed.set_footer(
+            text=(
+                "Imports today's messages. Timezone, cutoff and scoring lock after "
+                "competition data exists."
+            )
+        )
+        await ctx.send(embed=embed, ephemeral=True)
 
     @commands.hybrid_command(
         name="leaderboard",
@@ -519,7 +714,9 @@ class CompetitionCommands(commands.Cog):
             if database
             else None
         )
-        embeds = board_embeds(snapshot, cfg.guild_id, final=final, game=selected_game)
+        embeds = compact_boards(
+            snapshot, final=final, game=selected_game, limit=10 if links else None
+        )
         if links:
             embeds[-1].add_field(
                 name="Full leaderboard in your browser",
@@ -528,6 +725,22 @@ class CompetitionCommands(commands.Cog):
             )
         for embed in embeds:
             await ctx.send(embed=embed)
+
+    @commands.hybrid_command(
+        name="weekly", description="This server's weekly points from finalized days."
+    )
+    @commands.guild_only()
+    @commands.cooldown(1, 5, commands.BucketType.member)
+    async def weekly(self, ctx: commands.Context, day: str = "today"):
+        cfg = self.config(ctx)
+        selected = requested_day(day, datetime.now(UTC), cfg)
+        monday = selected - timedelta(days=selected.weekday())
+        summary = weekly_snapshot(
+            self.bot.store.finalized_snapshots(cfg.guild_id, monday, selected),
+            selected,
+            cfg.started_day,
+        )
+        await ctx.send(embed=weekly_embed(summary))
 
     @commands.hybrid_command(
         name="status",
@@ -549,16 +762,18 @@ class CompetitionCommands(commands.Cog):
             )
             expected.append(f"{GAME_TITLES[game]}: `{puzzle}` · [Play daily](<{GAME_URLS[game]}>)")
         deadline = int(closes_at(today, cfg).timestamp())
-        await ctx.send(
-            f"**Competition: {today}**\n"
-            f"Results: <#{cfg.input_channel_id}> · Boards: <#{cfg.output_channel_id}>\n"
-            f"{cfg.timezone} · cutoff {cfg.cutoff} · scoring `{cfg.scoring}`\n"
-            f"Deadline: <t:{deadline}:F> (<t:{deadline}:R>)\n"
-            + "\n".join(expected)
-            + "\nPuzzle dates use the confirmed 2026-11-13 numbering references. "
-            "Use `/puzzle_date` if a game's numbering changes.",
-            ephemeral=True,
+        embed = discord.Embed(
+            title=f"Competition · {today}",
+            color=MAUVE,
+            description=(
+                f"**Results:** <#{cfg.input_channel_id}> · **Boards:** <#{cfg.output_channel_id}>\n"
+                f"**Deadline:** <t:{deadline}:f> (<t:{deadline}:R>)\n" + "\n".join(expected)
+            ),
         )
+        embed.set_footer(
+            text=f"{cfg.timezone} · {cfg.cutoff} · {cfg.scoring} · !weekly for weekly stats"
+        )
+        await ctx.send(embed=embed, ephemeral=True)
 
     @commands.hybrid_command(name="puzzle_date", description="Correct a numbered puzzle's date.")
     @commands.guild_only()
