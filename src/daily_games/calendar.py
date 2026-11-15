@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .models import Game, ParsedResult, ServerConfig
 
 ANCHOR_DAY = date(2026, 11, 13)
-ANCHORS = {Game.TIMEGUESSR: 1262, Game.METAZOOA: 1201}
+ANCHORS = {Game.TIMEGUESSR: 1262, Game.SIZE_IT_UP: 96, Game.METAZOOA: 1201}
 
 
 def validate_timezone(value: str) -> str:
@@ -54,6 +54,6 @@ def post_due_at(day: date, config: ServerConfig) -> datetime:
 def puzzle_day(result: ParsedResult, override: date | None = None) -> date:
     if override is not None:
         return override
-    if result.game == Game.SIZE_IT_UP:
+    if result.game == Game.SIZE_IT_UP and not result.puzzle.isdecimal():
         return date.fromisoformat(result.puzzle)
     return ANCHOR_DAY + timedelta(days=int(result.puzzle) - ANCHORS[result.game])

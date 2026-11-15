@@ -3,7 +3,7 @@ import pytest
 from daily_games.models import Game
 from daily_games.parsers import parse_message
 
-from .conftest import FAILED_METAZOOA, METAZOOA, SIZEITUP, TIMEGUESSR
+from .conftest import FAILED_METAZOOA, METAZOOA, SIZEITUP, SIZEITUP_NUMBERED, TIMEGUESSR
 
 
 @pytest.mark.parametrize(
@@ -11,6 +11,7 @@ from .conftest import FAILED_METAZOOA, METAZOOA, SIZEITUP, TIMEGUESSR
     [
         (TIMEGUESSR, Game.TIMEGUESSR, "1262", 18419, True),
         (SIZEITUP, Game.SIZE_IT_UP, "2026-11-13", 298, True),
+        (SIZEITUP_NUMBERED, Game.SIZE_IT_UP, "98", 108, True),
         (METAZOOA, Game.METAZOOA, "1201", 2, True),
         (FAILED_METAZOOA, Game.METAZOOA, "1201", None, False),
     ],
@@ -44,6 +45,9 @@ def test_multiple_games_in_one_message():
         SIZEITUP.replace("298/500", "501/500"),
         SIZEITUP.replace("2026-11-13", "2026-02-30"),
         SIZEITUP.replace("Size It Up", "Size It Up: Pop Culture"),
+        SIZEITUP_NUMBERED.replace("#98", "#0"),
+        SIZEITUP_NUMBERED.replace("#98", "#1000001"),
+        SIZEITUP_NUMBERED.replace("#98", "#98\n2026-11-15"),
         METAZOOA.replace("2 guesses", "21 guesses"),
         METAZOOA.replace("I figured it out in 2 guesses!", ""),
         METAZOOA + "\nI was stumped by today's game!",

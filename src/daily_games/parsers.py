@@ -43,13 +43,22 @@ def _sizeitup(text: str) -> ParsedResult:
     ):
         raise ParseError("Only standard Size It Up is supported, not other variants.")
     date_match = re.search(r"^\s*(\d{4}-\d{2}-\d{2})\s*$", text, re.MULTILINE)
+    number_match = re.search(r"^\s*#\s*(\d+)\s*$", text, re.MULTILINE)
     score_match = re.search(r"^\s*Score:\s*(\d+)\s*/\s*(\d+)\s*$", text, re.MULTILINE)
-    if not date_match or not score_match:
-        raise ParseError("Size It Up: include the date and 'Score: number/500' Share text.")
-    try:
-        puzzle = date.fromisoformat(date_match[1]).isoformat()
-    except ValueError as exc:
-        raise ParseError("Size It Up: invalid puzzle date.") from exc
+    if not (date_match or number_match) or not score_match:
+        raise ParseError("Size It Up: include a date or #puzzle and 'Score: number/500'.")
+    if date_match and number_match:
+        raise ParseError("Size It Up: include only one puzzle date or number.")
+    if date_match:
+        try:
+            puzzle = date.fromisoformat(date_match[1]).isoformat()
+        except ValueError as exc:
+            raise ParseError("Size It Up: invalid puzzle date.") from exc
+    else:
+        number = int(number_match[1])
+        if not 1 <= number <= 1000000:
+            raise ParseError("Size It Up: puzzle number is outside the allowed range.")
+        puzzle = str(number)
     score, maximum = map(int, score_match.groups())
     if maximum != 500 or not 0 <= score <= maximum:
         raise ParseError("Size It Up: score must be between 0 and 500.")

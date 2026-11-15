@@ -43,7 +43,7 @@ from .timeguessr import current_daily_puzzle, next_reset
 
 log = logging.getLogger(__name__)
 ScoringMode = Literal["players_beaten", "placement"]
-NumberedGame = Literal["timeguessr", "metazooa"]
+NumberedGame = Literal["timeguessr", "sizeitup", "metazooa"]
 GameName = Literal["timeguessr", "sizeitup", "metazooa"]
 
 
@@ -70,14 +70,13 @@ def status_embed(
     expected = []
     for game in Game:
         override = store.puzzle_for_day(cfg.guild_id, game, day)
-        puzzle = override or (
-            day.isoformat()
-            if game == Game.SIZE_IT_UP
-            else str(ANCHORS[game] + (day - ANCHOR_DAY).days)
-        )
-        label = "expected " if game == Game.TIMEGUESSR else ""
+        puzzle = override or str(ANCHORS[game] + (day - ANCHOR_DAY).days)
+        label = "expected " if game in (Game.TIMEGUESSR, Game.SIZE_IT_UP) else ""
+        identity = f"#{puzzle}" if game == Game.SIZE_IT_UP else puzzle
+        if game == Game.SIZE_IT_UP:
+            identity += f" ({day.isoformat()})"
         expected.append(
-            f"{GAME_TITLES[game]}: {label}`{puzzle}` · [Play daily](<{GAME_URLS[game]}>)"
+            f"{GAME_TITLES[game]}: {label}`{identity}` · [Play daily](<{GAME_URLS[game]}>)"
         )
     deadline = int(closes_at(day, cfg).timestamp())
     if timeguessr_reset:

@@ -41,6 +41,69 @@ def test_confirmed_number_date_anchors():
     assert puzzle_day(ParsedResult(Game.TIMEGUESSR, "1262", 0)) == DAY
     assert puzzle_day(ParsedResult(Game.METAZOOA, "1201", 2)) == DAY
     assert puzzle_day(ParsedResult(Game.TIMEGUESSR, "1263", 0)) == DAY + timedelta(days=1)
+    assert puzzle_day(ParsedResult(Game.SIZE_IT_UP, "96", 100)) == DAY
+    assert puzzle_day(ParsedResult(Game.SIZE_IT_UP, "98", 108)) == date(2026, 11, 15)
+    assert puzzle_day(ParsedResult(Game.SIZE_IT_UP, "2026-11-15", 108)) == date(2026, 11, 15)
+
+
+def test_sizeitup_numbered_and_dated_share_for_same_day(store, config):
+    when = datetime(2026, 11, 15, 18, tzinfo=UTC)
+    assert (
+        submit(store, config, when, user=1, game=Game.SIZE_IT_UP, puzzle="98", score=108).status
+        == "accepted"
+    )
+    assert (
+        submit(
+            store,
+            config,
+            when,
+            user=2,
+            game=Game.SIZE_IT_UP,
+            puzzle="2026-11-15",
+            score=250,
+            message=1001,
+        ).status
+        == "accepted"
+    )
+    assert (
+        submit(
+            store,
+            config,
+            when,
+            user=1,
+            game=Game.SIZE_IT_UP,
+            puzzle="2026-11-15",
+            score=500,
+            message=1002,
+        ).status
+        == "duplicate"
+    )
+    assert [row.score for row in store.results(config.guild_id, date(2026, 11, 15))] == [108, 250]
+
+
+def test_sizeitup_numbered_share_rejects_previous_day(store, config):
+    when = datetime(2026, 11, 16, 18, tzinfo=UTC)
+    assert submit(store, config, when, game=Game.SIZE_IT_UP, puzzle="98").status == "old"
+
+
+def test_sizeitup_number_override_keeps_dated_share_valid(store, config):
+    day = date(2026, 11, 15)
+    store.set_override(config.guild_id, Game.SIZE_IT_UP, "99", day, actor_id=1)
+    when = datetime(2026, 11, 15, 18, tzinfo=UTC)
+    assert submit(store, config, when, game=Game.SIZE_IT_UP, puzzle="98").status == "wrong_puzzle"
+    assert submit(store, config, when, game=Game.SIZE_IT_UP, puzzle="99").status == "accepted"
+    assert (
+        submit(
+            store,
+            config,
+            when,
+            user=2,
+            game=Game.SIZE_IT_UP,
+            puzzle=day.isoformat(),
+            message=1001,
+        ).status
+        == "accepted"
+    )
 
 
 def test_server_isolation_and_independent_points(store, config, message_time):

@@ -39,7 +39,10 @@ def accept_result(
     if day > expected:
         return Outcome("future", f"This puzzle belongs to {day}; that competition day is not open.")
     assigned = store.puzzle_for_day(config.guild_id, result.game, day)
-    if assigned is not None and assigned != result.puzzle:
+    # A dated Size It Up Share identifies the day directly, even if an admin
+    # assigned that day's numbered Share format through /puzzle_date.
+    dated_size_result = result.game == Game.SIZE_IT_UP and result.puzzle == day.isoformat()
+    if assigned is not None and assigned != result.puzzle and not dated_size_result:
         return Outcome("wrong_puzzle", f"This server assigned puzzle {assigned} to {day}.")
     if store.board(config.guild_id, day):
         return Outcome("closed", f"The final board for {day} is already frozen.")

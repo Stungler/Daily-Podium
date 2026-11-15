@@ -222,13 +222,16 @@ The user confirmed these reference results were all from **2026-11-13**:
 |---|---|
 | TimeGuessr | #1262 |
 | Metazooa | Animal #1201 |
-| Size It Up | Explicit date 2026-11-13 |
+| Size It Up | Date 2026-11-13 in the earlier Share format; #98 observed on 2026-11-15 |
 
 Numbered games use one sequential number per calendar date from that reference. This is
 an explicit assumption, not a live query to the game. If a game skips/repeats/renumbers a
 puzzle, an admin can use `/puzzle_date` before results are recorded for that puzzle/date.
 Each override names one exact puzzle for that day and server. It does not shift all later
-numbering automatically. Size It Up uses the date printed in the Share result.
+numbering automatically. Size It Up accepts either a date or `#puzzle` in the Share
+result; the numbered format uses #98 on 2026-11-15 as its reference. Both formats
+count toward the same competition date, and one player can submit only once per game
+and day. `/status` shows the expected Size It Up number alongside the date.
 
 Metazooa's public client countdown uses midnight UTC; Magnitudle's official FAQ says midnight
 in the game timezone. TimeGuessr's next-daily timer pointed to 08:00 Europe/Berlin on

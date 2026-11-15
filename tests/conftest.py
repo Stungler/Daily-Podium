@@ -28,6 +28,20 @@ Score: 298/500
 
 https://magnitudle.com/size-it-up"""
 
+SIZEITUP_NUMBERED = (
+    "Size It Up\n#98\n\nScore: 108/500\n\n"
+    + "\n".join(
+        [
+            ":white_large_square:" * 5 + " 0",
+            ":white_large_square:" * 5 + " 8",
+            ":red_square:" * 2 + ":white_large_square:" * 3 + " 49",
+            ":red_square:" * 3 + ":white_large_square:" * 2 + " 51",
+            ":white_large_square:" * 5 + " 0",
+        ]
+    )
+    + "\n\nhttps://magnitudle.com/size-it-up"
+)
+
 METAZOOA = """🦍 Animal #1201 🐹
 I figured it out in 2 guesses!
 🟩🟩

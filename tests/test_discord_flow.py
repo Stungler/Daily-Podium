@@ -17,7 +17,7 @@ from daily_games.models import Game, ParsedResult
 from daily_games.presentation import make_snapshot
 from daily_games.service import accept_result
 
-from .conftest import SIZEITUP, TIMEGUESSR
+from .conftest import SIZEITUP, SIZEITUP_NUMBERED, TIMEGUESSR
 
 
 async def messages(items):
@@ -134,6 +134,21 @@ async def test_ingestion_records_before_reacting(bot, store, config, message_tim
     assert [call.args[0] for call in message.add_reaction.await_args_list] == ["✅", "🔥", "1️⃣"]
     message.edit.assert_awaited_once_with(suppress=True)
     message.reply.assert_not_awaited()
+
+
+async def test_numbered_sizeitup_share_is_acknowledged_and_recorded(bot, store, config):
+    when = datetime(2026, 11, 15, 18, tzinfo=UTC)
+    message = incoming(config, when, SIZEITUP_NUMBERED)
+    await bot.ingest(message, config, feedback=True)
+    recorded = store.results(config.guild_id, date(2026, 11, 15))
+    assert [(row.game, row.puzzle, row.score) for row in recorded] == [(Game.SIZE_IT_UP, "98", 108)]
+    assert message.add_reaction.await_args_list[0].args == ("✅",)
+    message.reply.assert_not_awaited()
+
+
+def test_status_shows_expected_sizeitup_number_and_date(store, config):
+    embed = status_embed(store, config, date(2026, 11, 15), None)
+    assert "Size It Up: expected `#98 (2026-11-15)`" in embed.description
 
 
 async def test_result_preview_suppression_is_optional(bot, store, config, message_time):
