@@ -917,7 +917,10 @@ class CompetitionCommands(commands.Cog):
             color=MAUVE,
             description=(
                 f"**Results:** <#{cfg.input_channel_id}> · **Boards:** <#{cfg.output_channel_id}>\n"
-                f"**Deadline:** <t:{deadline}:f> (<t:{deadline}:R>)\n" + "\n".join(expected)
+                f"**Deadline:** <t:{deadline}:f> (<t:{deadline}:R>)\n"
+                + "\n".join(expected)
+                + "\n\n*TimeGuessr may still show yesterday's puzzle after this server's cutoff."
+                " Wait for its next daily reset before submitting.*"
             ),
         )
         embed.set_footer(

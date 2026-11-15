@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from .calendar import active_day, puzzle_day
-from .models import ParsedResult, ServerConfig, Submission
+from .models import Game, ParsedResult, ServerConfig, Submission
 from .storage import Store
 
 
@@ -29,7 +29,13 @@ def accept_result(
     day = puzzle_day(result, store.override(config.guild_id, result.game, result.puzzle))
     expected = active_day(submitted_at, config)
     if day < config.started_day or day < expected:
-        return Outcome("old", f"This puzzle belongs to {day}; that competition day is closed.")
+        detail = f"This puzzle belongs to {day}; that competition day is closed."
+        if result.game == Game.TIMEGUESSR and (expected - day).days == 1:
+            detail += (
+                " TimeGuessr may still show the previous daily after this server's cutoff."
+                " Wait for its next daily puzzle before submitting for today."
+            )
+        return Outcome("old", detail)
     if day > expected:
         return Outcome("future", f"This puzzle belongs to {day}; that competition day is not open.")
     assigned = store.puzzle_for_day(config.guild_id, result.game, day)

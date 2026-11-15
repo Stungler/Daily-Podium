@@ -56,6 +56,7 @@ def test_server_isolation_and_independent_points(store, config, message_time):
 def test_old_puzzle_cannot_count_next_day_even_if_never_submitted(store, config, message_time):
     outcome = submit(store, config, message_time + timedelta(days=1))
     assert outcome.status == "old"
+    assert "TimeGuessr may still show the previous daily" in outcome.detail
     assert store.results(100, DAY + timedelta(days=1)) == []
 
 

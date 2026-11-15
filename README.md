@@ -230,7 +230,9 @@ numbering automatically. Size It Up uses the date printed in the Share result.
 Metazooa's public client countdown uses midnight UTC; Magnitudle's official FAQ says midnight
 in the game timezone. TimeGuessr's exact reset remains unverified. No guessed reset time
 is hardcoded. This means a game may still offer yesterday's puzzle after this server's
-competition for yesterday has closed. `/status` tells players which puzzle counts today.
+competition for yesterday has closed. On 2026-11-15 at 01:46 Europe/Berlin, TimeGuessr
+was still showing #1263 from 2026-11-14. `/status` tells players which puzzle counts
+today; wait for the game's next daily reset if it still shows the previous puzzle.
 
 Public references:
 
