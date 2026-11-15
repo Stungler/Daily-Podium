@@ -74,6 +74,8 @@ Open https://discord.com/developers/applications and select the bot.
    channels' permission overwrites. For an existing installation, update the bot's role and
    the board channel permissions; update Guild Install permissions in the Developer Portal
    for future invites. No new privileged intent is needed for threads.
+   To hide game-link previews on players' Share messages, also grant **Manage Messages** in
+   the results channel. Without it, results and reactions still work but previews remain.
 5. Open the installation link and choose the server. Repeat for additional servers.
 6. For other server administrators to install the bot, enable **Public Bot** on its Bot page.
 7. Leave **Interactions Endpoint URL** empty: this bot receives commands through the Gateway.
@@ -103,7 +105,8 @@ exists those three settings are locked to preserve competition history. Channel 
 can still change. A later version can add effective-dated settings changes.
 
 Paste the actual Share text from a daily game in the configured results channel. Expect ✅,
-then request the standings:
+then request the standings. With Manage Messages in that channel, the bot also hides
+the Share message's link preview while keeping its text and link intact:
 
 ```text
 !lb

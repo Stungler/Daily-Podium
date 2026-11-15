@@ -34,15 +34,24 @@ def channel_mock(guild_id, history=()):
 
 
 def incoming(config, message_time, content=TIMEGUESSR, message_id=777):
+    guild = SimpleNamespace(id=config.guild_id, me=SimpleNamespace(id=123))
+    channel = SimpleNamespace(
+        id=config.input_channel_id,
+        guild=guild,
+        permissions_for=MagicMock(return_value=SimpleNamespace(manage_messages=True)),
+    )
     return SimpleNamespace(
         content=content,
         author=SimpleNamespace(id=7, display_name="Player", bot=False),
         webhook_id=None,
         id=message_id,
-        channel=SimpleNamespace(id=config.input_channel_id),
+        channel=channel,
+        guild=guild,
         created_at=message_time,
         edited_at=None,
+        flags=SimpleNamespace(suppress_embeds=False),
         add_reaction=AsyncMock(),
+        edit=AsyncMock(),
         reply=AsyncMock(),
     )
 
@@ -123,7 +132,35 @@ async def test_ingestion_records_before_reacting(bot, store, config, message_tim
     await bot.ingest(message, config, feedback=True)
     assert store.results(config.guild_id, date(2026, 11, 13))[0].score == 18419
     assert [call.args[0] for call in message.add_reaction.await_args_list] == ["✅", "🔥", "1️⃣"]
+    message.edit.assert_awaited_once_with(suppress=True)
     message.reply.assert_not_awaited()
+
+
+async def test_result_preview_suppression_is_optional(bot, store, config, message_time):
+    message = incoming(config, message_time)
+    message.channel.permissions_for.return_value.manage_messages = False
+    await bot.ingest(message, config, feedback=True)
+    assert store.results(config.guild_id, date(2026, 11, 13))
+    message.add_reaction.assert_awaited()
+    message.edit.assert_not_awaited()
+
+
+async def test_preview_suppression_failure_does_not_lose_result(bot, store, config, message_time):
+    message = incoming(config, message_time)
+    message.edit.side_effect = discord.Forbidden(
+        SimpleNamespace(status=403, reason="Forbidden"),
+        {"code": 50013, "message": "Missing Permissions"},
+    )
+    await bot.ingest(message, config, feedback=True)
+    assert store.results(config.guild_id, date(2026, 11, 13))
+    message.add_reaction.assert_awaited()
+
+
+async def test_ordinary_link_is_not_suppressed(bot, config, message_time):
+    message = incoming(config, message_time, "See https://example.org/ for details")
+    await bot.ingest(message, config, feedback=True)
+    message.add_reaction.assert_not_awaited()
+    message.edit.assert_not_awaited()
 
 
 async def test_duplicate_warns_without_replacing(bot, store, config, message_time):

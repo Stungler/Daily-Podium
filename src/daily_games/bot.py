@@ -330,6 +330,16 @@ class DailyGamesBot(commands.Bot):
                 except discord.HTTPException:
                     log.warning("Could not add streak reaction in server %s", cfg.guild_id)
                     break
+        # A Share message can contain a game URL. Suppress its preview without
+        # changing the player's text, and leave ordinary chat links alone.
+        if (
+            not message.flags.suppress_embeds
+            and message.channel.permissions_for(message.guild.me).manage_messages
+        ):
+            try:
+                await message.edit(suppress=True)
+            except discord.HTTPException:
+                log.warning("Could not suppress result link preview in server %s", cfg.guild_id)
         if errors or rejected:
             try:
                 await message.reply(

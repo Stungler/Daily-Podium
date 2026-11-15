@@ -74,6 +74,7 @@ sequenceDiagram
     Store-->>Rules: Saved or duplicate
     Rules-->>Bot: Accepted, duplicate, old, future, or closed
     Bot->>Discord: React ✅ and streak emoji, or ⚠️ and an error reply
+    Bot->>Discord: Suppress Share-link preview if Manage Messages is granted
     Player->>Discord: Request !lb or /leaderboard
     Discord->>Bot: Command event
     Bot->>Store: Read submissions or saved final snapshot
@@ -87,6 +88,8 @@ player's score. `calendar.py` maps numbered puzzles to competition dates and app
 the guild's cutoff. `service.py` rejects wrong-channel, old, future, duplicate, and
 already-finalized results. `storage.py` inserts valid results into SQLite. Accepted
 single-game messages receive ✅ plus streak reactions; invalid input gets feedback.
+For recognized Share messages, the bot also suppresses link previews when it has
+Manage Messages in the results channel; it does not edit the player's text.
 
 Each guild's standings are independent. `scoring.py` ranks TimeGuessr and Size It Up
 by higher score, Metazooa by fewer guesses, and assigns points under that guild's
