@@ -20,6 +20,7 @@ from .models import GAME_TITLES, Game, ServerConfig, Submission
 from .periods import period_snapshot, period_start
 from .presentation import game_snapshot, make_snapshot
 from .service import requested_day
+from .streaks import completed_day_anchor, row_streak, server_streak_snapshots, streak_summaries
 
 STATIC = Path(__file__).with_name("dashboard_static")
 logger = logging.getLogger(__name__)
@@ -186,8 +187,14 @@ def read_data(
                 raise sqlite3.DatabaseError("Invalid frozen board.") from exc
         else:
             snapshot = make_snapshot([submission_from_row(row) for row in rows], selected_day, cfg)
+        full_snapshot = snapshot
         if selected_game is not None:
             snapshot = game_snapshot(snapshot, selected_game)
+        streak_boards = server_streak_snapshots(db, cfg.guild_id, selected_day)
+        if not saved_board:
+            streak_boards.append(full_snapshot)
+        anchor = selected_day if selected_day >= today else completed_day_anchor(selected_day)
+        summaries = streak_summaries(streak_boards, anchor)
         period_board = None
         if period != "day":
             saved_days = db.execute(
@@ -207,10 +214,22 @@ def read_data(
             except json.JSONDecodeError as exc:
                 raise sqlite3.DatabaseError("Invalid frozen board.") from exc
             period_board["rows"] = [
-                {**row, "user_id": str(row["user_id"])} for row in period_board["rows"]
+                {
+                    **row,
+                    "user_id": str(row["user_id"]),
+                    "streak": row_streak(summaries, row["user_id"], selected_game),
+                }
+                for row in period_board["rows"]
             ]
         # Copy before serialization so frozen SQLite snapshots are never modified.
-        snapshot["rows"] = [{**row, "user_id": str(row["user_id"])} for row in snapshot["rows"]]
+        snapshot["rows"] = [
+            {
+                **row,
+                "user_id": str(row["user_id"]),
+                "streak": row_streak(summaries, row["user_id"], selected_game),
+            }
+            for row in snapshot["rows"]
+        ]
         counts = db.execute(
             "SELECT game, COUNT(*) AS count FROM submissions "
             "WHERE guild_id=? AND day=? AND voided=0 GROUP BY game",

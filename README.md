@@ -142,6 +142,17 @@ points, participation, daily wins, and each game's plays, solves, wins, average
 successful score, and personal best. Tied first places count as wins. A game
 failure counts as a play but not toward the raw-score average; for Metazooa,
 fewer guesses are better. Today's provisional results appear after finalization.
+They also show current and best participation streaks for all games combined and
+each game. One accepted result, including a recorded failure, counts once for its
+competition date; missing a closed day breaks the run. A streak played yesterday
+remains current while today's competition is open. Voided results do not count.
+Each newly accepted single-game Share message gets ✅, 🔥, and one streak marker:
+1️⃣–9️⃣ show the exact length, 🔟 means 10–24, 💎 means 25–49, 🏆 means 50–99,
+and 💯 means 100 or more. There is no extra reply. If one message contains results
+for several games, it gets 🔥 without a number because reactions cannot label
+separate game streaks on the same message. `!stats` and both dashboards show exact
+current/best numbers. Dashboard game tabs show that game's streak; Combined shows
+the any-game streak. Historical and final dashboard streaks use frozen boards.
 When public dashboard links are configured, leaderboard replies also link to
 this server's full browser board and the global leaderboard. The global board
 counts each player's earliest accepted submission per game and date across

@@ -92,6 +92,9 @@ Using `python -m daily_games.dashboard` works with the existing editable install
 - Daily, week-to-date, and month-to-date boards for combined and individual games.
   Period boards add saved daily points through the selected date and show days played,
   wins (including ties), and finalized-day coverage. Provisional days do not count.
+- Player streak badges show current/best participation days (🔥 current/best).
+  Combined counts any game; each game tab counts only that game. Saved boards
+  determine historical streaks, while the selected provisional day updates live.
 - Shared tie ranks and awarded points matching Discord, including placement mode.
 - Frozen snapshots for final boards; viewing them never changes results.
 - Latest 20 accepted, non-voided submissions and latest 30 final boards per server.

@@ -8,6 +8,7 @@ import discord
 from .models import GAME_TITLES, Game
 from .periods import period_snapshot
 from .presentation import game_snapshot, score_label
+from .streaks import completed_day_anchor, streak_summaries
 
 MAUVE = 0xCBA6F7
 GREEN = 0xA6E3A1
@@ -150,7 +151,7 @@ def period_embed(summary):
     return embed
 
 
-def player_stats_snapshot(snapshots: list[dict], user_id: int) -> dict:
+def player_stats_snapshot(snapshots: list[dict], user_id: int, as_of: date | None = None) -> dict:
     """Summarize one player's finalized results in one Discord server."""
     games = {
         game.value: {"played": 0, "solved": 0, "wins": 0, "points": 0, "score_sum": 0, "best": None}
@@ -192,6 +193,15 @@ def player_stats_snapshot(snapshots: list[dict], user_id: int) -> dict:
             game_stats["wins"] += int(
                 any(row["user_id"] == user_id and row["rank"] == 1 for row in projected["rows"])
             )
+    anchor = as_of or (
+        completed_day_anchor(date.fromisoformat(max(item["day"] for item in snapshots)))
+        if snapshots
+        else date.min
+    )
+    streaks = streak_summaries(snapshots, anchor).get(user_id, {})
+    result["streak"] = streaks.get("all", {"current": 0, "best": 0})
+    for game in Game:
+        games[game.value]["streak"] = streaks.get(game.value, {"current": 0, "best": 0})
     return result
 
 
@@ -202,6 +212,8 @@ def player_stats_embed(stats: dict, display_name: str) -> discord.Embed:
             f"**{stats['days_played']}/{stats['finalized_days']}** days played · "
             f"**{stats['daily_wins']}** daily wins\n"
             f"**{stats['points']}** total points · **{average:.1f}** points per played day\n"
+            f"🔥 **{stats['streak']['current']}** current streak · "
+            f"**{stats['streak']['best']}** best\n"
             f"Last played: {stats['last_day']}"
         )
     else:
@@ -225,6 +237,7 @@ def player_stats_embed(stats: dict, display_name: str) -> discord.Embed:
             value = (
                 f"**{data['played']}** played · **{data['solved']}** solved · "
                 f"**{data['wins']}** wins\n"
+                f"🔥 {data['streak']['current']} current · {data['streak']['best']} best\n"
                 f"{data['points']} pts · avg {average} · best {best}"
             )
         embed.add_field(name=GAME_TITLES[game], value=value, inline=False)

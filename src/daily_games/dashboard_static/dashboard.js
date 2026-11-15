@@ -31,6 +31,13 @@ function gameScore(game, result) {
   return game === "metazooa" ? `${fmt.format(result.score)} guesses` : fmt.format(result.score);
 }
 function cell(tag, textValue, className) { return el(tag, className, textValue); }
+function streakChip(streak) {
+  if (!streak?.best) return null;
+  const chip = el("span", "streak-chip", `🔥 ${streak.current}/${streak.best}`);
+  chip.title = `${streak.current} current days · ${streak.best} best days`;
+  chip.setAttribute("aria-label", chip.title);
+  return chip;
+}
 
 function renderBoard(selected) {
   const board = selected.board;
@@ -58,13 +65,14 @@ function renderBoard(selected) {
       const playerCell = cell("td"); const player = el("div", "player");
       const initials = row.name.trim().split(/\s+/u).slice(0, 2).map((word) => [...word][0]).join("").toUpperCase() || "?";
       player.append(el("span", `avatar tone-${index % 4}`, initials), el("span", "player-name", row.name));
+      const streak = streakChip(row.streak); if (streak) player.append(streak);
       player.title = row.name; playerCell.append(player); tr.append(playerCell);
       const points = cell("td", undefined, "total"); points.append(document.createTextNode(fmt.format(row.points)), el("span", "", "pts"));
       tr.append(points, cell("td", row.days, "score"), cell("td", row.wins, "score"));
       return tr;
     }));
     $("board-empty").hidden = periodBoard.rows.length > 0;
-    text("scoring", "Saved daily points added · ties share rank · wins include ties");
+    text("scoring", "Saved daily points added · ties share rank · 🔥 current/best");
     text("board-note", `${periodBoard.start} → ${periodBoard.through} · ${periodBoard.finalized_days}/${periodBoard.expected_days} days finalized`);
     return;
   }
@@ -80,6 +88,7 @@ function renderBoard(selected) {
     const player = el("div", "player");
     const initials = row.name.trim().split(/\s+/u).map((word) => [...word][0]).slice(0, 2).join("").toUpperCase() || "?";
     player.append(el("span", `avatar tone-${index % 4}`, initials), el("span", "player-name", row.name));
+    const streak = streakChip(row.streak); if (streak) player.append(streak);
     player.title = row.name;
     playerCell.append(player);
     tr.append(playerCell);
@@ -97,7 +106,7 @@ function renderBoard(selected) {
   });
   $("board-rows").replaceChildren(...rows);
   $("board-empty").hidden = rows.length > 0;
-  text("scoring", board.scoring === "placement" ? "Placement scoring · tied ranks shared" : "1 + players beaten · tied ranks shared");
+  text("scoring", `${board.scoring === "placement" ? "Placement scoring" : "1 + players beaten"} · tied ranks shared · 🔥 current/best`);
   let note = `${niceDay(board.day)} · ${board.timezone}`;
   if (selected.posting) note += selected.posting.posted ? " · Posted to Discord" : " · Posting pending";
   text("board-note", note);

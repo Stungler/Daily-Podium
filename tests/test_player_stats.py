@@ -66,7 +66,8 @@ def test_stats_count_ties_failures_and_solved_zero(config):
     assert stats["daily_wins"] == 2  # Tied first places count; a zero-point day does not.
     assert stats["points"] == 6
     assert stats["last_day"] == third_day.isoformat()
-    assert stats["games"]["timeguessr"] == {
+    timeguessr = {k: v for k, v in stats["games"]["timeguessr"].items() if k != "streak"}
+    assert timeguessr == {
         "played": 2,
         "solved": 2,
         "wins": 2,
@@ -75,7 +76,7 @@ def test_stats_count_ties_failures_and_solved_zero(config):
         "best": 40000,
     }
     assert stats["games"]["sizeitup"]["wins"] == 1
-    assert stats["games"]["metazooa"] == {
+    assert {key: value for key, value in stats["games"]["metazooa"].items() if key != "streak"} == {
         "played": 3,
         "solved": 1,
         "wins": 1,
@@ -89,6 +90,8 @@ def test_stats_count_ties_failures_and_solved_zero(config):
     assert "avg 20,000.0" in embed.fields[0].value
     assert "best 40,000" in embed.fields[0].value
     assert "best 2 guesses" in embed.fields[2].value
+    assert stats["streak"] == {"current": 0, "best": 3}
+    assert stats["games"]["metazooa"]["streak"] == {"current": 0, "best": 3}
     assert len(embed) < 6000
 
 

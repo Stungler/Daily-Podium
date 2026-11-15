@@ -1,6 +1,6 @@
 # Daily Podium roadmap
 
-Updated: 2026-11-14
+Updated: 2026-11-15
 
 ## Private Tailscale dashboard
 
@@ -36,12 +36,14 @@ The services and backup timer are active; see [SYSTEMD.md](SYSTEMD.md).
 
 ### Feature backlog
 
-1. **More period leaderboards.** The combined weekly Discord leaderboard is done.
-   Add weekly per-game and monthly combined/per-game views, with explicit period
-   boundaries and a clear rule for any future scoring changes.
-2. **Participation streaks.** Consecutive competition days played, current/best
-   streaks, and optional milestone celebrations. Define whether playing any game
-   or all three counts, and handle missing days consistently.
+1. **More period leaderboards — done.** Weekly per-game and monthly combined/per-game
+   views are available in Discord and both dashboards. Weeks start Monday, months
+   start on the first, and only finalized days count. Period totals add the daily
+   points saved in each final board, so later scoring changes do not rewrite history.
+2. **Participation streaks — done.** Consecutive competition days played,
+   current/best streaks for any game and each game, and emoji milestones on
+   newly accepted results. Missing a closed day breaks the run; recorded
+   failures count as participation.
 3. **Optional deadline reminders.** A configurable reminder before cutoff,
    showing missing games. Avoid unsolicited individual mentions by default;
    persist delivery state so restarts do not repeat reminders.
@@ -56,7 +58,7 @@ The services and backup timer are active; see [SYSTEMD.md](SYSTEMD.md).
 
 - Combined daily leaderboards and scheduled final boards.
 - Compact daily Discord embeds with a linked results thread, per-game winner
-  highlights, and a combined weekly leaderboard (`!weekly`).
+  highlights, and weekly/monthly combined and per-game leaderboards.
 - Per-player finalized history in Discord with `!stats` / `/stats`.
 - Individual game views: `!lb sizeitup`, `!lb timeguessr`, `!lb metazooa`.
 - Date filters and a slash-command game selector.

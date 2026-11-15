@@ -22,6 +22,10 @@ database but cannot change scores, settings, or bot processes.
   retain the selected date, game, and period.
 - Week-to-date and month-to-date standings sum saved daily points through the
   selected date, with days played, tied wins, and finalized-day coverage.
+- Player badges show exact current/best participation streaks. Combined counts
+  any game, and game tabs show that game's streak. Global streak days count a
+  player once across servers; finalized days come from every participating
+  server's frozen board.
 - `!lb` and `/leaderboard` include links to both views when the public URL
   configuration exists.
 - Display names are learned from Discord at the bot's next startup and when

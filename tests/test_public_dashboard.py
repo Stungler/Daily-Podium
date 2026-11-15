@@ -85,10 +85,12 @@ async def test_global_earliest_per_game_and_ties(public_client):
     assert rows["Player 2"]["total"] == 4
     assert rows["Player 3"]["total"] == 2
     assert data["board"]["scoring"] == "players_beaten"
+    assert rows["Player 1"]["streak"] == {"current": 1, "best": 1}
     # The game filter ranks tied raw results together and preserves global points.
     data = await (await public_client.get("/api/leaderboard?game=timeguessr")).json()
     assert [row["rank"] for row in data["board"]["rows"]] == [1, 1, 3]
     assert [row["total"] for row in data["board"]["rows"]] == [2, 2, 1]
+    assert all(row["streak"]["current"] == 1 for row in data["board"]["rows"])
 
 
 async def test_server_link_isolated_and_ids_private(public_client):

@@ -128,7 +128,14 @@ async def test_live_board_matches_bot_and_preserves_snowflakes(client, store, co
     assert selected["board_state"] == "provisional"
     expected = make_snapshot(store.results(100, sample[0].day), sample[0].day, config)
     expected["rows"] = [{**row, "user_id": str(row["user_id"])} for row in expected["rows"]]
-    assert selected["board"] == expected
+    assert {
+        **selected["board"],
+        "rows": [
+            {k: v for k, v in row.items() if k != "streak"}
+            for row in selected["board"]["rows"]
+        ],
+    } == expected
+    assert all(row["streak"]["current"] == 1 for row in selected["board"]["rows"])
     assert {row["user_id"] for row in selected["recent"]} == {str(USER), "2", "3"}
     assert "Other server only" not in json.dumps(selected)
     assert "DISCORD_BOT_TOKEN" not in json.dumps(data)
@@ -143,7 +150,13 @@ async def test_game_views_match_existing_projection(client, store, config, sampl
         make_snapshot(store.results(100, sample[0].day), sample[0].day, config), game
     )
     expected["rows"] = [{**row, "user_id": str(row["user_id"])} for row in expected["rows"]]
-    assert selected["board"] == expected
+    assert {
+        **selected["board"],
+        "rows": [
+            {k: v for k, v in row.items() if k != "streak"}
+            for row in selected["board"]["rows"]
+        ],
+    } == expected
 
 
 async def test_frozen_board_and_posting_state_are_preserved(client, store, config, sample):

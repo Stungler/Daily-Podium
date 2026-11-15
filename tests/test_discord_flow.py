@@ -11,7 +11,7 @@ from daily_games.models import Game, ParsedResult
 from daily_games.presentation import make_snapshot
 from daily_games.service import accept_result
 
-from .conftest import TIMEGUESSR
+from .conftest import SIZEITUP, TIMEGUESSR
 
 
 async def messages(items):
@@ -108,7 +108,7 @@ async def test_ingestion_records_before_reacting(bot, store, config, message_tim
     message = incoming(config, message_time)
     await bot.ingest(message, config, feedback=True)
     assert store.results(config.guild_id, date(2026, 11, 13))[0].score == 18419
-    message.add_reaction.assert_awaited_once_with("✅")
+    assert [call.args[0] for call in message.add_reaction.await_args_list] == ["✅", "🔥", "1️⃣"]
     message.reply.assert_not_awaited()
 
 
@@ -120,6 +120,35 @@ async def test_duplicate_warns_without_replacing(bot, store, config, message_tim
     repost.add_reaction.assert_awaited_once_with("⚠️")
     assert "already submitted" in repost.reply.call_args.args[0]
     assert store.results(config.guild_id, date(2026, 11, 13))[0].score == 18419
+
+
+async def test_next_day_result_advances_only_its_game_streak(bot, store, config, message_time):
+    first = incoming(config, message_time)
+    second = incoming(
+        config,
+        message_time + timedelta(days=1),
+        TIMEGUESSR.replace("#1262", "#1263"),
+        778,
+    )
+    await bot.ingest(first, config, feedback=True)
+    await bot.ingest(second, config, feedback=True)
+    assert [call.args[0] for call in second.add_reaction.await_args_list] == [
+        "✅", "🔥", "2️⃣"
+    ]
+    second.reply.assert_not_awaited()
+
+
+async def test_failed_streak_reaction_keeps_rejection_feedback(bot, store, config, message_time):
+    await bot.ingest(incoming(config, message_time), config, feedback=True)
+    message = incoming(config, message_time, TIMEGUESSR + "\n" + SIZEITUP, 778)
+    forbidden = discord.Forbidden(
+        SimpleNamespace(status=403, reason="Forbidden"),
+        {"code": 50013, "message": "Missing Permissions"},
+    )
+    message.add_reaction.side_effect = [None, forbidden]
+    await bot.ingest(message, config, feedback=True)
+    assert len(store.results(config.guild_id, date(2026, 11, 13))) == 2
+    assert "already submitted" in message.reply.await_args.args[0]
 
 
 async def test_restart_recovers_using_original_message_time(bot, store, config, message_time):

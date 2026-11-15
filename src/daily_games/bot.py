@@ -28,6 +28,7 @@ from .presentation import game_snapshot, make_snapshot, score_label
 from .public_links import leaderboard_links
 from .service import accept_result, requested_day
 from .storage import Store
+from .streaks import streak_lengths, streak_reactions
 
 log = logging.getLogger(__name__)
 ScoringMode = Literal["players_beaten", "placement"]
@@ -204,7 +205,7 @@ class DailyGamesBot(commands.Bot):
                     mention_author=False,
                 )
             return
-        accepted, rejected = [], []
+        accepted, rejected, accepted_games = [], [], []
         for result in parsed:
             outcome = accept_result(
                 self.store,
@@ -219,21 +220,43 @@ class DailyGamesBot(commands.Bot):
             label = GAME_TITLES[result.game]
             if outcome.status == "accepted":
                 accepted.append(f"{label}: {outcome.detail}")
+                accepted_games.append(result.game)
             elif outcome.status != "ignored":
                 rejected.append(f"{label}: {outcome.detail}")
         if not feedback:
             return
+        acknowledged = False
         try:
             await message.add_reaction("✅" if accepted else "⚠️")
-            if errors or rejected:
+            acknowledged = True
+        except discord.HTTPException:
+            log.warning("Could not acknowledge result in server %s", cfg.guild_id)
+        if accepted and acknowledged:
+            if len(accepted_games) == 1:
+                day = active_day(message.created_at, cfg)
+                days = self.store.player_game_days(
+                    cfg.guild_id, message.author.id, accepted_games[0], day
+                )
+                markers = streak_reactions(streak_lengths(days, day)["current"])
+            else:
+                # Several games can share a message. One set of reaction icons cannot
+                # associate separate numbers with each game, so show the fire only.
+                markers = ["🔥"]
+            for emoji in markers:
+                try:
+                    await message.add_reaction(emoji)
+                except discord.HTTPException:
+                    log.warning("Could not add streak reaction in server %s", cfg.guild_id)
+                    break
+        if errors or rejected:
+            try:
                 await message.reply(
                     "\n".join([*accepted, *rejected, *errors])[:1800],
                     mention_author=False,
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
-        except discord.HTTPException:
-            # A missing reaction permission must never undo a stored submission.
-            log.warning("Could not acknowledge result in server %s", cfg.guild_id)
+            except discord.HTTPException:
+                log.warning("Could not send result feedback in server %s", cfg.guild_id)
 
     async def on_message(self, message: discord.Message):
         if message.author.bot or message.webhook_id or message.guild is None:
@@ -553,7 +576,7 @@ class CompetitionCommands(commands.Cog):
                 "`!lb yesterday` / `!lb sizeitup 2026-11-13` · another day\n"
                 "`!weekly [day] [game]` · weekly points from finalized days\n"
                 "`!monthly [day] [game]` · monthly points from finalized days\n"
-                "`!stats [@player]` · personal stats from finalized days\n"
+                "`!stats [@player]` · personal stats and streaks from finalized days\n"
                 "`!games` · play links · `!status` · puzzles and deadline\n"
                 "`!ping` · connection check"
             ),
@@ -564,6 +587,8 @@ class CompetitionCommands(commands.Cog):
                 "First accepted result per player/game counts. "
                 "Edits and reposts do not improve it. "
                 "Failures and missing games score zero; ties share rank. "
+                "Accepted single-game posts get ✅ and 🔥 streak reactions: "
+                "1️⃣–9️⃣, 🔟 at 10, 💎 at 25, 🏆 at 50, 💯 at 100. "
                 "Daily results post five minutes after cutoff, with details and weekly stats "
                 "in a thread."
             ),
@@ -791,7 +816,9 @@ class CompetitionCommands(commands.Cog):
         cfg = self.config(ctx)
         target = member or ctx.author
         snapshots = self.bot.store.finalized_snapshots(cfg.guild_id, cfg.started_day, date.max)
-        stats = player_stats_snapshot(snapshots, target.id)
+        stats = player_stats_snapshot(
+            snapshots, target.id, active_day(datetime.now(UTC), cfg)
+        )
         await ctx.send(embed=player_stats_embed(stats, target.display_name))
 
     @commands.hybrid_command(

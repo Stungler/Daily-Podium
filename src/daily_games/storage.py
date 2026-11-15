@@ -215,6 +215,14 @@ class Store:
             for row in rows
         ]
 
+    def player_game_days(self, guild_id: int, user_id: int, game: Game, through: date) -> set[date]:
+        rows = self.db.execute(
+            "SELECT day FROM submissions WHERE guild_id=? AND user_id=? AND game=? "
+            "AND day<=? AND voided=0",
+            (guild_id, user_id, game.value, through.isoformat()),
+        )
+        return {date.fromisoformat(row[0]) for row in rows}
+
     def board(self, guild_id: int, day: date) -> sqlite3.Row | None:
         return self.db.execute(
             "SELECT * FROM boards WHERE guild_id=? AND day=?", (guild_id, day.isoformat())

@@ -6,6 +6,7 @@ const initialSlug = location.pathname.startsWith("/s/") ? location.pathname.slic
 const state = {scope: initialSlug, lastServer: initialSlug === "global" ? "" : initialSlug, day: params.get("day") || "today", game: params.get("game") || "all", period: params.get("period") || "day", busy: false, changed: false, data: null, stale: false};
 const fmt = new Intl.NumberFormat();
 function node(tag, cls, value) { const n = document.createElement(tag); if (cls) n.className = cls; if (value !== undefined) n.textContent = String(value); return n; }
+function streakChip(streak) { if (!streak?.best) return null; const chip = node("span", "streak-chip", `🔥 ${streak.current}/${streak.best}`); chip.title = `${streak.current} current days · ${streak.best} best days`; chip.setAttribute("aria-label", chip.title); return chip; }
 function text(id, value) { $(id).textContent = value; }
 function dateLabel(day) { return new Intl.DateTimeFormat(undefined, {day: "numeric", month: "short", year: "numeric", timeZone: "UTC"}).format(new Date(`${day}T12:00:00Z`)); }
 function chooseDay(day) { state.day = day; $("day").value = ["today", "yesterday"].includes(day) ? day : "custom"; $("custom-day").hidden = $("day").value !== "custom"; if (!$("custom-day").hidden) $("custom-day").value = day; }
@@ -34,11 +35,11 @@ function render(data) {
     $("rows").replaceChildren(...periodBoard.rows.map((entry, index) => {
       const row = node("tr"); const rank = node("td"); rank.append(node("span", `rank${entry.rank === 1 ? " top" : ""}`, entry.rank)); row.append(rank);
       const playerCell = node("td"); const player = node("div", "player"); const initials = entry.name.trim().split(/\s+/u).slice(0, 2).map((part) => [...part][0]).join("").toUpperCase() || "?";
-      player.append(node("span", `avatar tone-${index % 4}`, initials), node("span", "player-name", entry.name)); player.title = entry.name; playerCell.append(player); row.append(playerCell);
+      player.append(node("span", `avatar tone-${index % 4}`, initials), node("span", "player-name", entry.name)); const streak = streakChip(entry.streak); if (streak) player.append(streak); player.title = entry.name; playerCell.append(player); row.append(playerCell);
       const points = node("td", "total", fmt.format(entry.points)); points.append(node("span", "", "pts")); row.append(points, node("td", "score", entry.days), node("td", "score", entry.wins)); return row;
     }));
     $("empty").hidden = periodBoard.rows.length > 0;
-    text("scoring", "Saved daily points added · ties share rank · wins include ties");
+    text("scoring", "Saved daily points added · ties share rank · 🔥 current/best");
     text("final-note", `${periodBoard.start} → ${periodBoard.through} · ${periodBoard.finalized_days}/${periodBoard.expected_days} days finalized`);
   } else {
   const games = state.game === "all" ? Object.keys(names) : [state.game];
@@ -46,12 +47,12 @@ function render(data) {
   $("rows").replaceChildren(...board.rows.map((entry, index) => {
     const row = node("tr"); const rank = node("td"); rank.append(node("span", `rank${entry.rank === 1 ? " top" : ""}`, entry.rank)); row.append(rank);
     const playerCell = node("td"); const player = node("div", "player"); const initials = entry.name.trim().split(/\s+/u).slice(0, 2).map((part) => [...part][0]).join("").toUpperCase() || "?";
-    player.append(node("span", `avatar tone-${index % 4}`, initials), node("span", "player-name", entry.name)); player.title = entry.name; playerCell.append(player); row.append(playerCell);
+    player.append(node("span", `avatar tone-${index % 4}`, initials), node("span", "player-name", entry.name)); const streak = streakChip(entry.streak); if (streak) player.append(streak); player.title = entry.name; playerCell.append(player); row.append(playerCell);
     games.forEach((game) => { const result = entry.games[game]; const score = node("td", "score"); const label = !result ? "—" : !result.solved ? "Failed" : game === "metazooa" ? `${fmt.format(result.score)} guesses` : fmt.format(result.score); score.append(node("span", result ? "" : "muted", label)); if (result) score.append(node("span", "points", `+${result.points}`)); row.append(score); });
     const total = node("td", "total", fmt.format(entry.total)); total.append(node("span", "", "pts")); row.append(total); return row;
   }));
   $("empty").hidden = board.rows.length > 0;
-  text("scoring", board.scoring === "placement" ? "Placement scoring · ties share rank" : "1 + players beaten · ties share rank");
+  text("scoring", `${board.scoring === "placement" ? "Placement scoring" : "1 + players beaten"} · ties share rank · 🔥 current/best`);
   text("final-note", data.state === "final" ? (global ? "All participating server boards finalized" : "Saved final standings") : "Standings can change until finalized");
   }
   text("rules-title", global ? "One player. One result per game." : "This community's competition"); text("rules", data.rules);

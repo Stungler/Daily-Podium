@@ -23,6 +23,12 @@ from .periods import period_snapshot, period_start
 from .presentation import game_snapshot, make_snapshot
 from .public_links import configure, ensure_key, read_config, server_slug
 from .service import requested_day
+from .streaks import (
+    completed_day_anchor,
+    row_streak,
+    server_streak_snapshots,
+    streak_summaries,
+)
 
 GLOBAL_RULES = ServerConfig(0, 0, 0, "Europe/Berlin", "00:00", "players_beaten", date(2026, 11, 13))
 PUBLIC = web.AppKey("public", dict)
@@ -40,6 +46,7 @@ def safe_snapshot(snapshot: dict) -> dict:
                 "rank": row["rank"],
                 "name": row["name"],
                 "total": row["total"],
+                "streak": row["streak"],
                 "games": {
                     game.value: {
                         field: row["games"][game.value][field]
@@ -111,6 +118,33 @@ def global_snapshot(db, configs, day):
     ) and active <= frozen.keys()
 
 
+def global_streak_snapshots(db, configs, through):
+    """Use only dates whose participating servers all have frozen boards."""
+    boards = {}
+    for row in db.execute(
+        "SELECT guild_id, day, snapshot FROM boards WHERE day<=?", (through.isoformat(),)
+    ):
+        try:
+            boards.setdefault(row["day"], {})[row["guild_id"]] = json.loads(row["snapshot"])
+        except json.JSONDecodeError as exc:
+            raise sqlite3.DatabaseError("Invalid saved board.") from exc
+    snapshots = []
+    for day_text, saved in sorted(boards.items()):
+        day = date.fromisoformat(day_text)
+        active = {cfg.guild_id for cfg in configs if cfg.started_day <= day}
+        if not active or not active <= saved.keys():
+            continue
+        players = {}
+        for guild_id in active:
+            for row in saved[guild_id]["rows"]:
+                player = players.setdefault(
+                    row["user_id"], {"user_id": row["user_id"], "games": {}}
+                )
+                player["games"].update(row["games"])
+        snapshots.append({"day": day_text, "rows": list(players.values())})
+    return snapshots
+
+
 def public_data(
     database: Path, key: bytes, scope: str, day: str, game: str, period: str = "day"
 ) -> dict:
@@ -156,6 +190,15 @@ def public_data(
             if scope == "global"
             else snapshot_for(db, cfg, selected_day)
         )
+        streak_boards = (
+            global_streak_snapshots(db, configs, selected_day)
+            if scope == "global"
+            else server_streak_snapshots(db, cfg.guild_id, selected_day)
+        )
+        if not final:
+            streak_boards.append(snapshot)
+        anchor = selected_day if selected_day >= today else completed_day_anchor(selected_day)
+        summaries = streak_summaries(streak_boards, anchor)
         period_board = None
         if period != "day":
             start = period_start(selected_day, period)
@@ -186,13 +229,23 @@ def public_data(
                 saved_days, selected_day, started, period, selected_game
             )
             period_board["rows"] = [
-                {field: row[field] for field in ("rank", "name", "points", "days", "wins")}
+                {
+                    **{field: row[field] for field in ("rank", "name", "points", "days", "wins")},
+                    "streak": row_streak(summaries, row["user_id"], selected_game),
+                }
                 for row in period_board["rows"]
             ]
         player_count = len(snapshot["rows"])
         result_count = sum(len(row["games"]) for row in snapshot["rows"])
         if selected_game is not None:
             snapshot = game_snapshot(snapshot, selected_game)
+        snapshot = {
+            **snapshot,
+            "rows": [
+                {**row, "streak": row_streak(summaries, row["user_id"], selected_game)}
+                for row in snapshot["rows"]
+            ],
+        }
         if scope == "global":
             history = [
                 row[0]
