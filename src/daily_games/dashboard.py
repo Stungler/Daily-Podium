@@ -247,6 +247,27 @@ def read_data(
                 raise ServerNotFound("Server is not configured.")
             return response
         today = active_day(now, cfg)
+        mode_rows = (
+            db.execute(
+                "SELECT effective_day, mode FROM result_modes WHERE guild_id=? "
+                "ORDER BY effective_day",
+                (cfg.guild_id,),
+            ).fetchall()
+            if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='result_modes'"
+            ).fetchone()
+            else []
+        )
+        current_mode = "channel"
+        pending_mode = None
+        for mode_row in mode_rows:
+            if mode_row["effective_day"] <= today.isoformat():
+                current_mode = mode_row["mode"]
+            elif pending_mode is None:
+                pending_mode = {
+                    "mode": mode_row["mode"],
+                    "effective_day": mode_row["effective_day"],
+                }
         selected_day = requested_day(day, now, cfg)
         # These helpers add/subtract a day; exclude date extremes up front.
         if selected_day in {date.min, date.max}:
@@ -339,6 +360,8 @@ def read_data(
                 "timezone": cfg.timezone,
                 "cutoff": cfg.cutoff,
                 "scoring": cfg.scoring,
+                "result_mode": current_mode,
+                "pending_result_mode": pending_mode,
                 "input_channel_id": str(cfg.input_channel_id),
                 "output_channel_id": str(cfg.output_channel_id),
                 "started_day": cfg.started_day.isoformat(),

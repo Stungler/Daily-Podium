@@ -50,6 +50,13 @@ The services and backup timer are active; see [SYSTEMD.md](SYSTEMD.md).
 4. **Clearer rejected-submission feedback.** Improve the existing feedback for
    duplicates, wrong puzzle dates, unsupported Share text, and submissions after
    cutoff. Keep replies limited to rejected submissions so normal play stays quiet.
+5. **Optional daily results threads — implemented in source.** Per-server channel
+   mode remains the default. Thread mode creates a results thread at each day's
+   cutoff, pins its parent prompt, edits that prompt with morning links, and routes
+   final details into the same thread. `/setup` selects a new server's mode;
+   `/result_mode` changes an existing server from the next competition day.
+   Per-thread cursors and mode history preserve recovery and prior results.
+   See [README.md](README.md#daily-results-thread-mode) for use and permissions.
 
 ## Already implemented in source
 

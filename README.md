@@ -70,12 +70,14 @@ Open https://discord.com/developers/applications and select the bot.
 2. **Installation:** Guild Install checked, User Install unchecked.
 3. **Guild Install scopes:** `bot`, `applications.commands`.
 4. Permissions: View Channels, Send Messages, Read Message History, Add Reactions, Embed Links,
-   Create Public Threads, and Send Messages in Threads. These must also be allowed by the chosen
-   channels' permission overwrites. For an existing installation, update the bot's role and
-   the board channel permissions; update Guild Install permissions in the Developer Portal
-   for future invites. No new privileged intent is needed for threads.
-   To hide game-link previews on players' Share messages, also grant **Manage Messages** in
-   the results channel. Without it, results and reactions still work but previews remain.
+   Create Public Threads, and Send Messages in Threads. For daily results thread mode, also
+   grant **Pin Messages** and **Manage Messages** in the results parent channel. Pin Messages
+   rotates the day's pinned prompt; Manage Messages hides link previews on Share messages.
+   These permissions must also be allowed by the chosen channels' permission overwrites.
+   For an existing installation, update the bot's role and channel permissions; update Guild
+   Install permissions in the Developer Portal for future invites. No new privileged intent
+   is needed for threads. Without Manage Messages, channel-mode results and reactions still
+   work, but previews remain.
 5. Open the installation link and choose the server. Repeat for additional servers.
 6. For other server administrators to install the bot, enable **Public Bot** on its Bot page.
 7. Leave **Interactions Endpoint URL** empty: this bot receives commands through the Gateway.
@@ -181,12 +183,14 @@ in each server's results channel to compete there; results do not automatically 
 | `/stats [member]` | `!stats [@member]` | Personal history in this server from finalized days |
 | `/myday` | — | Private current-day checklist, provisional points, and streaks |
 | `/status` | `!status` | Server settings, expected puzzles, game links, deadline, and TimeGuessr's live next reset |
-| `/setup` | `!setup #results [#boards] [timezone] [cutoff] [scoring]` | Admin configuration |
+| `/setup` | `!setup #results [#boards] [timezone] [cutoff] [scoring] [mode]` | Admin configuration; mode is `channel` (default) or `thread` |
+| `/result_mode` | `!result_mode thread` / `!result_mode channel` | Admin switch of submission mode from the next competition day |
 | `/puzzle_date` | `!puzzle_date timeguessr 1262 2026-11-13` | Admin date correction for a numbered puzzle |
 | `/void_result` | `!void_result @player metazooa` | Admin correction of a current-day entry |
 
 Prefix setup arguments are positional; slash setup allows selecting only the options you
-want to change. `/setup`, `/puzzle_date` and `/void_result` check Manage Server at runtime.
+want to change. `/setup`, `/result_mode`, `/puzzle_date` and `/void_result` check Manage Server
+at runtime.
 `/status` and admin replies are private for slash commands; prefix replies are normal messages.
 
 ## Competition rules
@@ -259,11 +263,13 @@ during recovery because their original score/time cannot be established. Repost 
 Share result while the day is open. Results already stored remain unchanged by later edits.
 
 Daily boards are frozen to durable snapshots, then posted. The final board is one compact embed
-in the board channel. A public thread attached to that message holds game highlights, the full
-per-player results, and a weekly summary. The detail content and its delivery state are saved
+in the board channel. In channel mode, a public thread attached to that message holds game
+highlights, the full per-player results, and a weekly summary. The detail content and its
+delivery state are saved
 in SQLite, so a restart resumes incomplete threads without changing the frozen scores.
-After the final board, the bot posts one compact game-links and status embed for the new
-competition day in the same channel. The final board still posts five minutes after cutoff.
+In channel mode, after the final board, the bot posts one compact game-links and status
+embed for the new competition day in the same channel. The final board posts five minutes
+after cutoff.
 The game-links message waits until at least 08:05 in that server's timezone and checks the
 official TimeGuessr daily page. If the expected puzzle is still unavailable, it retries every
 five minutes until noon; it then posts with a warning even if TimeGuessr is delayed. Results
@@ -278,6 +284,31 @@ before retrying. Existing boards posted before this feature keep their original 
 This reduces duplicate posting; Discord and SQLite do not provide an atomic transaction across
 both systems, so strict exactly-once delivery cannot be guaranteed under every network failure.
 Read Message History permission is needed on the output channel and in threads for reconciliation.
+
+### Daily results thread mode
+
+The default `channel` mode keeps the results channel and the 08:05 game-links post as before.
+An admin can choose `thread` during first `/setup`, or switch an existing server with
+`/result_mode thread`. Existing-server changes begin on the next competition day; earlier
+days retain their original routing and scores. `/result_mode channel` switches back the same
+way. The configured results channel becomes the parent for the daily results thread; the
+board channel can be the same or a different channel.
+
+In thread mode, the bot creates a short daily post and public results thread when the
+server's competition day opens at its cutoff. It pins that parent post and unpins only
+its previous daily post. The morning game links and TimeGuessr status edit that same
+parent post at 08:05 or when the expected puzzle is ready; they do not add a second
+morning post. Members paste Share results into the thread, where the bot applies the
+same scoring, duplicate protection, emoji reactions, and link-preview suppression.
+`/status` links to the active thread. Results posted in the parent channel after the
+thread opens get a reply pointing to the thread. If the bot was offline before it
+could create the thread, parent-channel Share messages from that gap are recovered
+using their original Discord timestamps.
+
+The final board still appears in the configured board channel five minutes after cutoff.
+Its full results and weekly summary go into that day's results thread. Thread IDs,
+per-thread recovery cursors, pin state, and mode history are saved in SQLite so
+restarts and later mode changes do not reassign or lose accepted submissions.
 
 A failed recovery prevents finalization rather than freezing an incomplete board. Failures
 are logged and retried. Backlogged competition days are processed when the bot comes back.

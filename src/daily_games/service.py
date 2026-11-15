@@ -22,9 +22,10 @@ def accept_result(
     message_id: int,
     channel_id: int,
     submitted_at: datetime,
+    allowed_channel_id: int | None = None,
 ) -> Outcome:
     """Apply identical rules to live messages and recovered history timestamps."""
-    if channel_id != config.input_channel_id:
+    if channel_id != (allowed_channel_id or config.input_channel_id):
         return Outcome("ignored", "Results belong in this server's configured results channel.")
     day = puzzle_day(result, store.override(config.guild_id, result.game, result.puzzle))
     expected = active_day(submitted_at, config)

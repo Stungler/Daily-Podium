@@ -202,6 +202,8 @@ function render(data) {
   text("setting-cutoff", selected.config.cutoff);
   text("setting-post", clock(selected.post_due_at, selected.config.timezone));
   text("setting-scoring", selected.config.scoring === "placement" ? "Placement" : "1 + players beaten");
+  const pendingMode = selected.config.pending_result_mode;
+  text("setting-mode", `${selected.config.result_mode === "thread" ? "Daily thread" : "Channel"}${pendingMode ? ` → ${pendingMode.mode === "thread" ? "daily thread" : "channel"} on ${pendingMode.effective_day}` : ""}`);
   text("setting-input", selected.config.input_channel_id);
   text("setting-output", selected.config.output_channel_id);
   renderBoard(selected);

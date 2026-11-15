@@ -2,7 +2,7 @@
 
 This document describes the code and the deployment on **bee** as of 2026-11-15.
 Daily Podium is one Discord bot serving multiple Discord servers (guilds). Each guild
-has its own results channel, board channel, timezone, cutoff, scoring setting, and
+has its own results channel, board channel, submission mode, timezone, cutoff, scoring setting, and
 saved submissions. The private operations dashboard and public leaderboard are
 separate web processes; neither receives Discord events or controls the bot.
 Running processes load code at startup, so a code change takes effect after that
@@ -63,7 +63,7 @@ sequenceDiagram
     participant Store as storage.py / SQLite
     participant View as scoring.py + presentation.py
 
-    Player->>Discord: Paste a game's Share text in the configured results channel
+    Player->>Discord: Paste Share text in the results channel or today's results thread
     Discord->>Bot: Gateway message event, with message ID and creation time
     Bot->>Store: Load this guild's configuration
     Bot->>Parser: parse_message(text)
@@ -82,7 +82,8 @@ sequenceDiagram
     Bot->>Discord: Send compact embed and optional browser links
 ```
 
-`bot.py` listens only to configured results channels for score ingestion. `parsers.py`
+`bot.py` listens to configured results channels and its saved daily results threads
+for score ingestion. `parsers.py`
 recognizes the three games' Share formats; it does not ask those sites to verify a
 player's score. `calendar.py` maps numbered puzzles to competition dates and applies
 the guild's cutoff. `service.py` rejects wrong-channel, old, future, duplicate, and
@@ -100,8 +101,9 @@ snapshots. The public **global** leaderboard is a derived view: it selects each 
 earliest accepted submission per game and date across guilds, then recalculates points
 for that shared field. It never changes per-guild boards.
 
-The bot keeps a channel-history cursor per guild. After startup or a reconnect, it
-reads missed messages in order and uses each message's original Discord creation time
+The bot keeps a parent-channel history cursor per guild and a separate cursor for
+each daily results thread. After startup or a reconnect, it reads missed messages
+in order and uses each message's original Discord creation time
 when applying the cutoff. A per-guild asynchronous lock keeps recovery, live ingestion,
 and finalization from racing. A file lock prevents two bot processes from writing the
 same database. Edited messages that were never recorded are skipped during recovery
@@ -112,22 +114,28 @@ because Discord history no longer contains their original content.
 The bot's `daily_tick` runs every 30 seconds. For a midnight cutoff in
 `Europe/Berlin`, the sequence is:
 
-1. At or after **00:05**, recover missed results, freeze yesterday's board, and post
+1. In thread mode, at the **00:00** cutoff, create and pin today's parent prompt and
+   its public results thread. The previous bot-owned daily pin is removed. Early
+   parent-channel messages posted while the bot was offline are still recovered.
+2. At or after **00:05**, recover missed results, freeze yesterday's board, and post
    one compact final embed in the configured board channel. A public thread attached
-   to it contains highlights, full results, and a weekly summary. Thread failures
+   to it contains highlights, full results, and a weekly summary in channel mode.
+   In thread mode, those details go into yesterday's results thread. Thread failures
    retry separately and do not change the frozen board.
-2. At or after **08:05**, check TimeGuessr's current daily puzzle. If the expected
-   puzzle is still unavailable, retry the game-links post every five minutes until
-   noon. Then post the compact links/status embed in the same board channel, with a
-   warning if the game is still behind. Other games can be submitted before this post.
-3. `/status` reads TimeGuessr's live next-reset timer for its response. The timer and
+3. At or after **08:05**, check TimeGuessr's current daily puzzle. If the expected
+   puzzle is still unavailable, retry until noon. Then post the compact links/status
+   embed in the board channel for channel mode, or edit today's pinned prompt in
+   thread mode. Other games can be submitted before this update.
+4. `/status` reads TimeGuessr's live next-reset timer for its response. The timer and
    current puzzle number come from TimeGuessr over HTTPS. If its page cannot be read,
    the bot uses a general reset warning and still sends the links post.
 
 For other guild cutoffs, the final board is due five minutes after their configured
-cutoff; the links post is no earlier than 08:05 in that guild's timezone and no earlier
-than its previous final board. `boards`, `board_details`, and `daily_prompts` store
-delivery state, attempted times, and Discord message IDs. If a send times out after
+cutoff. Channel-mode links post no earlier than 08:05 in that guild's timezone and
+no earlier than its previous final board. Thread-mode prompts open at cutoff and
+receive the links edit at or after 08:05. `result_modes`, `boards`, `board_details`,
+and `daily_prompts` store mode history, delivery state, cursors, attempted times,
+pins, and Discord message IDs. If a send times out after
 Discord accepted it, the bot searches channel or thread history for its unique embed
 footer before retrying. Discord and SQLite cannot make one atomic transaction, so
 this reduces duplicate posts but cannot guarantee strict exactly-once delivery under

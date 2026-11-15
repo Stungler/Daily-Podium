@@ -72,6 +72,7 @@ async def test_hybrid_commands_register_without_discord_connection(bot):
         "stats",
         "myday",
         "setup",
+        "result_mode",
         "status",
         "puzzle_date",
         "void_result",

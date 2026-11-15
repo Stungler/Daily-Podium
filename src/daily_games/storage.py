@@ -88,6 +88,12 @@ class Store:
                 PRIMARY KEY(guild_id, game, puzzle),
                 UNIQUE(guild_id, game, day)
             );
+            CREATE TABLE IF NOT EXISTS result_modes (
+                guild_id INTEGER NOT NULL REFERENCES servers(guild_id),
+                effective_day TEXT NOT NULL,
+                mode TEXT NOT NULL CHECK(mode IN ('channel', 'thread')),
+                PRIMARY KEY(guild_id, effective_day)
+            );
             CREATE TABLE IF NOT EXISTS audit (
                 id INTEGER PRIMARY KEY,
                 guild_id INTEGER NOT NULL,
@@ -101,7 +107,17 @@ class Store:
         prompt_columns = {row[1] for row in self.db.execute("PRAGMA table_info(daily_prompts)")}
         if "retry_at" not in prompt_columns:
             self.db.execute("ALTER TABLE daily_prompts ADD COLUMN retry_at TEXT")
+        for column, definition in (
+            ("thread_id", "INTEGER"),
+            ("thread_cursor", "INTEGER"),
+            ("linked", "INTEGER NOT NULL DEFAULT 0"),
+            ("morning_updated", "INTEGER NOT NULL DEFAULT 0"),
+            ("pinned", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if column not in prompt_columns:
+                self.db.execute(f"ALTER TABLE daily_prompts ADD COLUMN {column} {definition}")
         self.db.execute("INSERT OR IGNORE INTO schema_version VALUES (4)")
+        self.db.execute("INSERT OR IGNORE INTO schema_version VALUES (5)")
         self.db.commit()
 
     def close(self):
@@ -174,6 +190,25 @@ class Store:
             self.db.execute("SELECT 1 FROM boards WHERE guild_id=? LIMIT 1", (guild_id,)).fetchone()
             is not None
         )
+
+    def mode_for_day(self, guild_id: int, day: date) -> str:
+        row = self.db.execute(
+            "SELECT mode FROM result_modes WHERE guild_id=? AND effective_day<=? "
+            "ORDER BY effective_day DESC LIMIT 1",
+            (guild_id, day.isoformat()),
+        ).fetchone()
+        return row[0] if row else "channel"
+
+    def set_result_mode(self, guild_id: int, day: date, mode: str, actor_id: int):
+        if mode not in ("channel", "thread"):
+            raise ValueError("Choose channel or thread mode.")
+        with self.db:
+            self.db.execute(
+                "INSERT INTO result_modes(guild_id,effective_day,mode) VALUES (?,?,?) "
+                "ON CONFLICT(guild_id,effective_day) DO UPDATE SET mode=excluded.mode",
+                (guild_id, day.isoformat(), mode),
+            )
+            self._audit(guild_id, actor_id, "result_mode", f"{mode} from {day}")
 
     def insert(self, result: Submission) -> bool:
         # A voided message must not resurrect when history is replayed.
@@ -297,6 +332,55 @@ class Store:
         with self.db:
             self.db.execute(
                 "UPDATE daily_prompts SET message_id=? WHERE guild_id=? AND day=?",
+                (message_id, guild_id, day.isoformat()),
+            )
+
+    def mark_prompt_thread(self, guild_id: int, day: date, thread_id: int):
+        with self.db:
+            self.db.execute(
+                "UPDATE daily_prompts SET thread_id=? WHERE guild_id=? AND day=?",
+                (thread_id, guild_id, day.isoformat()),
+            )
+
+    def mark_prompt_flag(self, guild_id: int, day: date, flag: str, value: bool = True):
+        if flag not in ("linked", "morning_updated", "pinned"):
+            raise ValueError("Invalid prompt flag.")
+        with self.db:
+            self.db.execute(
+                f"UPDATE daily_prompts SET {flag}=? WHERE guild_id=? AND day=?",
+                (int(value), guild_id, day.isoformat()),
+            )
+
+    def pinned_prompts(self, guild_id: int, before: date) -> list[sqlite3.Row]:
+        return list(
+            self.db.execute(
+                "SELECT * FROM daily_prompts WHERE guild_id=? AND day<? AND pinned=1",
+                (guild_id, before.isoformat()),
+            )
+        )
+
+    def prompt_for_thread(self, guild_id: int, thread_id: int) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT * FROM daily_prompts WHERE guild_id=? AND thread_id=?",
+            (guild_id, thread_id),
+        ).fetchone()
+
+    def open_thread_prompts(self, guild_id: int) -> list[sqlite3.Row]:
+        return list(
+            self.db.execute(
+                "SELECT p.* FROM daily_prompts p LEFT JOIN boards b "
+                "ON b.guild_id=p.guild_id AND b.day=p.day "
+                "WHERE p.guild_id=? AND p.thread_id IS NOT NULL AND b.day IS NULL "
+                "ORDER BY p.day",
+                (guild_id,),
+            )
+        )
+
+    def advance_thread_cursor(self, guild_id: int, day: date, message_id: int):
+        with self.db:
+            self.db.execute(
+                "UPDATE daily_prompts SET thread_cursor=MAX(COALESCE(thread_cursor,0),?) "
+                "WHERE guild_id=? AND day=?",
                 (message_id, guild_id, day.isoformat()),
             )
 

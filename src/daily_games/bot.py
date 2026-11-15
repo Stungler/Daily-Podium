@@ -43,6 +43,7 @@ from .timeguessr import current_daily_puzzle, next_reset
 
 log = logging.getLogger(__name__)
 ScoringMode = Literal["players_beaten", "placement"]
+ResultMode = Literal["channel", "thread"]
 NumberedGame = Literal["timeguessr", "sizeitup", "metazooa"]
 GameName = Literal["timeguessr", "sizeitup", "metazooa"]
 
@@ -66,6 +67,7 @@ def status_embed(
     timeguessr_reset: datetime | None,
     *,
     scheduled: bool = False,
+    thread_id: int | None = None,
 ) -> discord.Embed:
     expected = []
     for game in Game:
@@ -95,7 +97,8 @@ def status_embed(
         title=f"{'Play today' if scheduled else 'Competition'} · {day}",
         color=MAUVE,
         description=(
-            f"**Results:** <#{cfg.input_channel_id}> · **Boards:** <#{cfg.output_channel_id}>\n"
+            f"**Results:** <#{thread_id or cfg.input_channel_id}> · "
+            f"**Boards:** <#{cfg.output_channel_id}>\n"
             f"**Deadline:** <t:{deadline}:f> (<t:{deadline}:R>)\n"
             + "\n".join(expected)
             + f"\n\n{reset_note}"
@@ -108,6 +111,23 @@ def status_embed(
             else f"{cfg.timezone} · {cfg.cutoff} · {cfg.scoring} · !weekly for weekly stats"
         )
     )
+    return embed
+
+
+def thread_prompt_embed(
+    cfg: ServerConfig, day: date, thread_id: int | None = None
+) -> discord.Embed:
+    destination = f"<#{thread_id}>" if thread_id else "the thread below this post"
+    embed = discord.Embed(
+        title=f"Play today · {day}",
+        color=MAUVE,
+        description=(
+            f"Post today's Share results in {destination}. "
+            f"The final board appears in <#{cfg.output_channel_id}> after cutoff.\n"
+            "Game links and puzzle status will be added here in the morning."
+        ),
+    )
+    embed.set_footer(text=prompt_marker(cfg.guild_id, day))
     return embed
 
 
@@ -254,7 +274,7 @@ class DailyGamesBot(commands.Bot):
                 except Exception:
                     log.exception("Recovery failed for server %s", cfg.guild_id)
 
-    async def recover_locked(self, cfg: ServerConfig):
+    async def recover_locked(self, cfg: ServerConfig, before: discord.Message | None = None):
         """Call while holding the server lock. Advance only after processing each message."""
         channel = self.get_channel(cfg.input_channel_id)
         if not isinstance(channel, discord.TextChannel) or channel.guild.id != cfg.guild_id:
@@ -266,9 +286,34 @@ class DailyGamesBot(commands.Bot):
             else boundary(cfg.started_day, cfg.timezone, cfg.cutoff).astimezone(UTC)
         )
         # Original Discord creation times, not recovery time, determine eligibility.
-        async for message in channel.history(limit=None, after=after, oldest_first=True):
+        options = {"limit": None, "after": after, "oldest_first": True}
+        if before is not None:
+            options["before"] = before
+        async for message in channel.history(**options):
             await self.ingest(message, cfg, feedback=False)
             self.store.advance_cursor(cfg.guild_id, message.id)
+        for prompt in self.store.open_thread_prompts(cfg.guild_id):
+            thread = self.get_channel(prompt["thread_id"])
+            if thread is None:
+                thread = await self.fetch_channel(prompt["thread_id"])
+            if (
+                not isinstance(thread, discord.Thread)
+                or thread.guild.id != cfg.guild_id
+                or thread.parent_id != prompt["output_channel_id"]
+            ):
+                raise ValueError("Configured results thread is unavailable.")
+            day = date.fromisoformat(prompt["day"])
+            after = (
+                discord.Object(id=prompt["thread_cursor"])
+                if prompt["thread_cursor"]
+                else boundary(day, cfg.timezone, cfg.cutoff).astimezone(UTC)
+            )
+            options = {"limit": None, "after": after, "oldest_first": True}
+            if before is not None:
+                options["before"] = before
+            async for message in thread.history(**options):
+                await self.ingest(message, cfg, feedback=False)
+                self.store.advance_thread_cursor(cfg.guild_id, day, message.id)
         self.needs_recovery.discard(cfg.guild_id)
 
     async def ingest(self, message: discord.Message, cfg: ServerConfig, *, feedback: bool):
@@ -277,6 +322,49 @@ class DailyGamesBot(commands.Bot):
         parsed, errors = parse_message(message.content)
         if not parsed and not errors:
             return
+        source_day = active_day(message.created_at, cfg)
+        if message.channel.id == cfg.input_channel_id:
+            if self.store.mode_for_day(cfg.guild_id, source_day) == "thread":
+                prompt = self.store.prompt(cfg.guild_id, source_day)
+                if (
+                    prompt is not None
+                    and prompt["thread_id"] is not None
+                    and message.created_at >= discord.utils.snowflake_time(prompt["message_id"])
+                ):
+                    if feedback:
+                        await self.suppress_result_preview(message, cfg)
+                        try:
+                            await message.reply(
+                                f"Post today's Share results in <#{prompt['thread_id']}>.",
+                                mention_author=False,
+                                allowed_mentions=discord.AllowedMentions.none(),
+                            )
+                        except discord.HTTPException:
+                            log.warning("Could not redirect result in server %s", cfg.guild_id)
+                    return
+        else:
+            prompt = self.store.prompt_for_thread(cfg.guild_id, message.channel.id)
+            if prompt is None:
+                return
+            if source_day != date.fromisoformat(prompt["day"]):
+                if feedback:
+                    await self.suppress_result_preview(message, cfg)
+                    current = self.store.prompt(cfg.guild_id, source_day)
+                    destination = (
+                        f"<#{current['thread_id']}>"
+                        if current is not None and current["thread_id"]
+                        else "today's results thread"
+                    )
+                    try:
+                        await message.reply(
+                            f"This thread is for {prompt['day']}. "
+                            f"Post today's results in {destination}.",
+                            mention_author=False,
+                            allowed_mentions=discord.AllowedMentions.none(),
+                        )
+                    except discord.HTTPException:
+                        log.warning("Could not redirect result in server %s", cfg.guild_id)
+                return
         if message.edited_at is not None:
             # History exposes only the edited content, so we cannot reconstruct the
             # original submission or establish whether its score changed after cutoff.
@@ -297,6 +385,7 @@ class DailyGamesBot(commands.Bot):
                 message_id=message.id,
                 channel_id=message.channel.id,
                 submitted_at=message.created_at,
+                allowed_channel_id=message.channel.id,
             )
             label = GAME_TITLES[result.game]
             if outcome.status == "accepted":
@@ -331,14 +420,7 @@ class DailyGamesBot(commands.Bot):
                     break
         # A Share message can contain a game URL. Suppress its preview without
         # changing the player's text, and leave ordinary chat links alone.
-        if (
-            not message.flags.suppress_embeds
-            and message.channel.permissions_for(message.guild.me).manage_messages
-        ):
-            try:
-                await message.edit(suppress=True)
-            except discord.HTTPException:
-                log.warning("Could not suppress result link preview in server %s", cfg.guild_id)
+        await self.suppress_result_preview(message, cfg)
         if errors or rejected:
             try:
                 await message.reply(
@@ -349,18 +431,38 @@ class DailyGamesBot(commands.Bot):
             except discord.HTTPException:
                 log.warning("Could not send result feedback in server %s", cfg.guild_id)
 
+    async def suppress_result_preview(self, message: discord.Message, cfg: ServerConfig):
+        if (
+            not message.flags.suppress_embeds
+            and message.channel.permissions_for(message.guild.me).manage_messages
+        ):
+            try:
+                await message.edit(suppress=True)
+            except discord.HTTPException:
+                log.warning("Could not suppress result link preview in server %s", cfg.guild_id)
+
     async def on_message(self, message: discord.Message):
         if message.author.bot or message.webhook_id or message.guild is None:
             return
         cfg = self.store.config(message.guild.id)
-        if cfg and message.channel.id == cfg.input_channel_id:
+        is_results_source = cfg and (
+            message.channel.id == cfg.input_channel_id
+            or self.store.prompt_for_thread(cfg.guild_id, message.channel.id) is not None
+        )
+        if is_results_source:
             async with self.guild_locks[cfg.guild_id]:
                 try:
                     if cfg.guild_id in self.needs_recovery:
                         # Leave this live event out of history so it still gets feedback.
                         await self.recover_locked_before(cfg, message)
                     await self.ingest(message, cfg, feedback=True)
-                    self.store.advance_cursor(cfg.guild_id, message.id)
+                    if message.channel.id == cfg.input_channel_id:
+                        self.store.advance_cursor(cfg.guild_id, message.id)
+                    else:
+                        prompt = self.store.prompt_for_thread(cfg.guild_id, message.channel.id)
+                        self.store.advance_thread_cursor(
+                            cfg.guild_id, date.fromisoformat(prompt["day"]), message.id
+                        )
                 except Exception:
                     self.needs_recovery.add(cfg.guild_id)
                     log.exception("Submission processing failed for server %s", cfg.guild_id)
@@ -371,19 +473,7 @@ class DailyGamesBot(commands.Bot):
         await self.process_commands(message)
 
     async def recover_locked_before(self, cfg: ServerConfig, current: discord.Message):
-        channel = current.channel
-        cursor = self.store.cursor(cfg.guild_id)
-        after = (
-            discord.Object(id=cursor)
-            if cursor
-            else boundary(cfg.started_day, cfg.timezone, cfg.cutoff).astimezone(UTC)
-        )
-        async for message in channel.history(
-            limit=None, after=after, before=current, oldest_first=True
-        ):
-            await self.ingest(message, cfg, feedback=False)
-            self.store.advance_cursor(cfg.guild_id, message.id)
-        self.needs_recovery.discard(cfg.guild_id)
+        await self.recover_locked(cfg, before=current)
 
     @tasks.loop(seconds=30, reconnect=True)
     async def daily_tick(self):
@@ -394,6 +484,9 @@ class DailyGamesBot(commands.Bot):
                 continue
             try:
                 async with self.guild_locks[cfg.guild_id]:
+                    active = active_day(now, cfg)
+                    if self.store.mode_for_day(cfg.guild_id, active) == "thread":
+                        await self.publish_thread_prompt_safely(cfg, active, now)
                     # Always recover before freezing to include pre-cutoff messages missed offline.
                     await self.recover_locked(cfg)
                     day = cfg.started_day
@@ -405,7 +498,9 @@ class DailyGamesBot(commands.Bot):
                             )
                             self.store.freeze(cfg.guild_id, day, cfg.output_channel_id, snapshot)
                         await self.publish_locked(cfg, day, now)
-                        await self.publish_prompt_locked(cfg, day + timedelta(days=1), now)
+                        next_day = day + timedelta(days=1)
+                        if self.store.mode_for_day(cfg.guild_id, next_day) == "channel":
+                            await self.publish_prompt_locked(cfg, next_day, now)
                         day += timedelta(days=1)
             except Exception:
                 errors += 1
@@ -541,6 +636,8 @@ class DailyGamesBot(commands.Bot):
 
     async def publish_prompt_locked(self, cfg: ServerConfig, day: date, now: datetime):
         """Post today's links after the previous board, reconciling ambiguous sends."""
+        if self.store.mode_for_day(cfg.guild_id, day) != "channel":
+            return
         if day != active_day(now, cfg):
             return
         if now < boundary(day, cfg.timezone, "08:05").astimezone(UTC):
@@ -551,6 +648,7 @@ class DailyGamesBot(commands.Bot):
         self.store.plan_prompt(cfg.guild_id, day, board["output_channel_id"])
         prompt = self.store.prompt(cfg.guild_id, day)
         if prompt["message_id"] is not None:
+            await self.unpin_previous_prompts_locked(cfg.guild_id, day)
             return
         if prompt["retry_at"] and datetime.fromisoformat(prompt["retry_at"]) > now:
             return
@@ -567,6 +665,7 @@ class DailyGamesBot(commands.Bot):
                     embed.footer.text == marker for embed in message.embeds
                 ):
                     self.store.mark_prompt_posted(cfg.guild_id, day, message.id)
+                    await self.unpin_previous_prompts_locked(cfg.guild_id, day)
                     return
         expected_puzzle = int(
             self.store.puzzle_for_day(cfg.guild_id, Game.TIMEGUESSR, day)
@@ -592,7 +691,126 @@ class DailyGamesBot(commands.Bot):
             self.store.mark_prompt_attempt(cfg.guild_id, day, now)
         message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
         self.store.mark_prompt_posted(cfg.guild_id, day, message.id)
+        await self.unpin_previous_prompts_locked(cfg.guild_id, day)
         log.info("Daily links posted/reconciled: server=%s day=%s", cfg.guild_id, day)
+
+    async def publish_thread_prompt_safely(self, cfg: ServerConfig, day: date, now: datetime):
+        try:
+            await self.publish_thread_prompt_locked(cfg, day, now)
+        except Exception:
+            log.exception("Daily results thread unavailable: server=%s day=%s", cfg.guild_id, day)
+
+    async def publish_thread_prompt_locked(self, cfg: ServerConfig, day: date, now: datetime):
+        """Create the day's pinned entry point, then enrich it at the morning hour."""
+        if day != active_day(now, cfg) or self.store.mode_for_day(cfg.guild_id, day) != "thread":
+            return
+        self.store.plan_prompt(cfg.guild_id, day, cfg.input_channel_id)
+        prompt = self.store.prompt(cfg.guild_id, day)
+        channel = self.get_channel(prompt["output_channel_id"])
+        if not isinstance(channel, discord.TextChannel) or channel.guild.id != cfg.guild_id:
+            raise ValueError("Daily results parent channel is unavailable.")
+        if prompt["message_id"] is None:
+            found = None
+            if prompt["attempted_at"]:
+                attempt = datetime.fromisoformat(prompt["attempted_at"])
+                async for message in channel.history(
+                    limit=None, after=attempt - timedelta(seconds=5), oldest_first=True
+                ):
+                    if message.author.id == self.user.id and any(
+                        embed.footer.text == prompt_marker(cfg.guild_id, day)
+                        for embed in message.embeds
+                    ):
+                        found = message
+                        break
+            if found is None:
+                if not prompt["attempted_at"]:
+                    self.store.mark_prompt_attempt(cfg.guild_id, day, now)
+                found = await channel.send(
+                    embed=thread_prompt_embed(cfg, day),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            self.store.mark_prompt_posted(cfg.guild_id, day, found.id)
+            prompt = self.store.prompt(cfg.guild_id, day)
+        thread = self.get_channel(prompt["thread_id"] or prompt["message_id"])
+        if thread is None:
+            try:
+                thread = await self.fetch_channel(prompt["thread_id"] or prompt["message_id"])
+            except discord.NotFound:
+                thread = await channel.create_thread(
+                    name=f"Daily Games · {day} · results",
+                    message=discord.Object(id=prompt["message_id"]),
+                    auto_archive_duration=1440,
+                    reason="Daily game results",
+                )
+        if (
+            not isinstance(thread, discord.Thread)
+            or thread.guild.id != cfg.guild_id
+            or thread.parent_id != channel.id
+        ):
+            raise ValueError("Daily results thread does not match its parent channel.")
+        if thread.locked:
+            raise ValueError("Daily results thread is locked by a moderator.")
+        if thread.archived:
+            await thread.edit(archived=False)
+        if prompt["thread_id"] is None:
+            self.store.mark_prompt_thread(cfg.guild_id, day, thread.id)
+            prompt = self.store.prompt(cfg.guild_id, day)
+        parent_message = None
+        if (
+            not prompt["linked"]
+            or not prompt["pinned"]
+            or (
+                not prompt["morning_updated"]
+                and now >= boundary(day, cfg.timezone, "08:05").astimezone(UTC)
+            )
+        ):
+            parent_message = await channel.fetch_message(prompt["message_id"])
+        if not prompt["linked"]:
+            await parent_message.edit(embed=thread_prompt_embed(cfg, day, thread.id))
+            self.store.mark_prompt_flag(cfg.guild_id, day, "linked")
+        if not prompt["pinned"]:
+            try:
+                if not parent_message.pinned:
+                    await parent_message.pin(reason="Current Daily Games results thread")
+                self.store.mark_prompt_flag(cfg.guild_id, day, "pinned")
+            except discord.HTTPException:
+                log.warning("Could not pin daily results prompt in server %s", cfg.guild_id)
+        if self.store.prompt(cfg.guild_id, day)["pinned"]:
+            await self.unpin_previous_prompts_locked(cfg.guild_id, day)
+        if prompt["morning_updated"] or now < boundary(day, cfg.timezone, "08:05").astimezone(UTC):
+            return
+        expected_puzzle = int(
+            self.store.puzzle_for_day(cfg.guild_id, Game.TIMEGUESSR, day)
+            or ANCHORS[Game.TIMEGUESSR] + (day - ANCHOR_DAY).days
+        )
+        live_puzzle = await current_daily_puzzle()
+        if (
+            live_puzzle is not None
+            and live_puzzle < expected_puzzle
+            and now < boundary(day, cfg.timezone, "12:00").astimezone(UTC)
+        ):
+            return
+        embed = status_embed(
+            self.store, cfg, day, await next_reset(now), scheduled=True, thread_id=thread.id
+        )
+        await parent_message.edit(embed=embed)
+        self.store.mark_prompt_flag(cfg.guild_id, day, "morning_updated")
+
+    async def unpin_previous_prompts_locked(self, guild_id: int, day: date):
+        for old in self.store.pinned_prompts(guild_id, day):
+            channel = self.get_channel(old["output_channel_id"])
+            if not isinstance(channel, discord.TextChannel):
+                continue
+            try:
+                message = await channel.fetch_message(old["message_id"])
+                if message.author.id == self.user.id and message.pinned:
+                    await message.unpin(reason="Replaced by today's Daily Games thread")
+            except discord.NotFound:
+                pass
+            except discord.HTTPException:
+                log.warning("Could not unpin prior prompt in server %s", guild_id)
+                continue
+            self.store.mark_prompt_flag(guild_id, date.fromisoformat(old["day"]), "pinned", False)
 
     async def publish_details_safely(self, cfg: ServerConfig, day: date, now: datetime):
         details = self.store.details(cfg.guild_id, day)
@@ -618,28 +836,40 @@ class DailyGamesBot(commands.Bot):
         if not payload["embeds"]:
             self.store.update_details(cfg.guild_id, day, complete=True)
             return
-        channel = self.get_channel(board["output_channel_id"])
+        result_prompt = (
+            self.store.prompt(cfg.guild_id, day)
+            if self.store.mode_for_day(cfg.guild_id, day) == "thread"
+            else None
+        )
+        use_results_thread = result_prompt is not None and result_prompt["thread_id"] is not None
+        parent_id = (
+            result_prompt["output_channel_id"] if use_results_thread else board["output_channel_id"]
+        )
+        channel = self.get_channel(parent_id)
         if not isinstance(channel, discord.TextChannel) or channel.guild.id != cfg.guild_id:
             raise ValueError("Daily board channel is unavailable.")
         permissions = channel.permissions_for(channel.guild.me)
-        required = (
-            "create_public_threads",
-            "send_messages_in_threads",
-            "read_message_history",
-            "embed_links",
-        )
+        required = ["send_messages_in_threads", "read_message_history", "embed_links"]
+        if not use_results_thread:
+            required.append("create_public_threads")
         if any(not getattr(permissions, name) for name in required):
             raise ValueError(
                 "Daily details need Create Public Threads, Send Messages in Threads, "
                 "Read Message History, and Embed Links in the board channel."
             )
         # A message-started thread has the parent's message ID, even after an ambiguous timeout.
-        thread_id = details["thread_id"] or board["message_id"]
+        thread_id = (
+            result_prompt["thread_id"]
+            if use_results_thread
+            else details["thread_id"] or board["message_id"]
+        )
         thread = self.get_channel(thread_id)
         if thread is None:
             try:
                 thread = await self.fetch_channel(thread_id)
             except discord.NotFound:
+                if use_results_thread:
+                    raise ValueError("Daily results thread was deleted.") from None
                 thread = await channel.create_thread(
                     name=f"Daily Podium · {day} · results & weekly stats",
                     message=discord.Object(id=board["message_id"]),
@@ -715,6 +945,26 @@ class CompetitionCommands(commands.Cog):
             raise commands.BadArgument("An admin must run /setup or !setup first.")
         return cfg
 
+    @staticmethod
+    def check_thread_permissions(channel: discord.TextChannel, member: discord.Member):
+        permissions = channel.permissions_for(member)
+        required = (
+            "view_channel",
+            "send_messages",
+            "embed_links",
+            "create_public_threads",
+            "send_messages_in_threads",
+            "read_message_history",
+            "add_reactions",
+            "manage_messages",
+            "pin_messages",
+        )
+        missing = [name for name in required if not getattr(permissions, name)]
+        if missing:
+            raise commands.BadArgument(
+                f"Missing thread-mode permissions in {channel.mention}: {', '.join(missing)}"
+            )
+
     @commands.hybrid_command(name="ping", description="Check whether the bot is online.")
     async def ping(self, ctx: commands.Context):
         await ctx.send("Pong! Daily Games is online.")
@@ -726,6 +976,7 @@ class CompetitionCommands(commands.Cog):
             color=MAUVE,
             description=(
                 "Play a game and paste its **Share** result in the results channel.\n"
+                "In thread mode, paste it in today's pinned results thread.\n"
                 "`!lb` · standings and browser links\n"
                 "`!lb sizeitup` / `timeguessr` / `metazooa` · one game\n"
                 "`!lb yesterday` / `!lb sizeitup 2026-11-13` · another day\n"
@@ -734,6 +985,7 @@ class CompetitionCommands(commands.Cog):
                 "`!stats [@player]` · personal stats and streaks from finalized days\n"
                 "`/myday` · your accepted games and streaks, privately\n"
                 "`!games` · play links · `!status` · puzzles and deadline\n"
+                "`/result_mode` · admin switch between channel and thread mode\n"
                 "`!ping` · connection check"
             ),
         )
@@ -829,6 +1081,7 @@ class CompetitionCommands(commands.Cog):
         timezone: str | None = None,
         cutoff: str | None = None,
         scoring: ScoringMode | None = None,
+        mode: ResultMode | None = None,
     ):
         old = self.bot.store.config(ctx.guild.id)
         timezone = validate_timezone(timezone or (old.timezone if old else "Europe/Berlin"))
@@ -840,6 +1093,13 @@ class CompetitionCommands(commands.Cog):
         )
         if not isinstance(board_channel, discord.TextChannel):
             raise commands.BadArgument("Choose an accessible text channel for daily boards.")
+        now = datetime.now(UTC)
+        effective_day = active_day(now, old) if old else None
+        selected_mode = mode or (
+            self.bot.store.mode_for_day(ctx.guild.id, effective_day + timedelta(days=1))
+            if old
+            else "channel"
+        )
         for channel in (results_channel, board_channel):
             if channel.guild.id != ctx.guild.id:
                 raise commands.BadArgument("Both channels must belong to this server.")
@@ -852,7 +1112,8 @@ class CompetitionCommands(commands.Cog):
                 raise commands.BadArgument(
                     f"Missing permissions in {channel.mention}: {', '.join(missing)}"
                 )
-        now = datetime.now(UTC)
+        if selected_mode == "thread":
+            self.check_thread_permissions(results_channel, ctx.guild.me)
         cfg = ServerConfig(
             ctx.guild.id,
             results_channel.id,
@@ -872,8 +1133,13 @@ class CompetitionCommands(commands.Cog):
                 cfg.scoring,
                 active_day(now, cfg),
             )
+        mode_start = active_day(now, cfg)
+        if old is not None and mode is not None:
+            mode_start += timedelta(days=1)
         async with self.bot.guild_locks[cfg.guild_id]:
             self.bot.store.configure(cfg, ctx.author.id)
+            if mode is not None:
+                self.bot.store.set_result_mode(cfg.guild_id, mode_start, mode, ctx.author.id)
             self.bot.needs_recovery.add(cfg.guild_id)
         embed = discord.Embed(
             title="Competition configured",
@@ -882,10 +1148,14 @@ class CompetitionCommands(commands.Cog):
                 f"**Results:** {results_channel.mention} · **Boards:** {board_channel.mention}\n"
                 f"**Cutoff:** {cutoff} ({timezone}) · post five minutes later\n"
                 f"**Scoring:** {scoring} · `!lb` for standings · `!weekly` for weekly stats"
+                f"\n**Results mode:** {selected_mode}"
+                + (f" (from {mode_start})" if old is not None and mode is not None else "")
             ),
         )
         permissions = board_channel.permissions_for(ctx.guild.me)
-        if not permissions.create_public_threads or not permissions.send_messages_in_threads:
+        if selected_mode == "channel" and (
+            not permissions.create_public_threads or not permissions.send_messages_in_threads
+        ):
             embed.add_field(
                 name="Optional detail threads",
                 value=(
@@ -901,6 +1171,28 @@ class CompetitionCommands(commands.Cog):
             )
         )
         await ctx.send(embed=embed, ephemeral=True)
+
+    @commands.hybrid_command(
+        name="result_mode", description="Choose channel or daily-thread submissions."
+    )
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.default_permissions(manage_guild=True)
+    async def result_mode(self, ctx: commands.Context, mode: ResultMode):
+        cfg = self.config(ctx)
+        channel = ctx.guild.get_channel(cfg.input_channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            raise commands.BadArgument("Configured results channel is unavailable.")
+        if mode == "thread":
+            self.check_thread_permissions(channel, ctx.guild.me)
+        day = active_day(datetime.now(UTC), cfg) + timedelta(days=1)
+        async with self.bot.guild_locks[cfg.guild_id]:
+            self.bot.store.set_result_mode(cfg.guild_id, day, mode, ctx.author.id)
+        await ctx.send(
+            f"Results mode will be **{mode}** from {day}. "
+            "Today's submissions stay in their current mode.",
+            ephemeral=True,
+        )
 
     @commands.hybrid_command(
         name="leaderboard",
@@ -1032,7 +1324,15 @@ class CompetitionCommands(commands.Cog):
     async def status(self, ctx: commands.Context):
         cfg = self.config(ctx)
         today = active_day(datetime.now(UTC), cfg)
-        embed = status_embed(self.bot.store, cfg, today, await next_reset(datetime.now(UTC)))
+        prompt = self.bot.store.prompt(cfg.guild_id, today)
+        thread_id = (
+            prompt["thread_id"]
+            if self.bot.store.mode_for_day(cfg.guild_id, today) == "thread" and prompt
+            else None
+        )
+        embed = status_embed(
+            self.bot.store, cfg, today, await next_reset(datetime.now(UTC)), thread_id=thread_id
+        )
         await ctx.send(embed=embed, ephemeral=True)
 
     @commands.hybrid_command(name="puzzle_date", description="Correct a numbered puzzle's date.")

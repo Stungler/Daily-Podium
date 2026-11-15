@@ -2,7 +2,7 @@ import argparse
 import json
 import sqlite3
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -141,6 +141,19 @@ async def test_live_board_matches_bot_and_preserves_snowflakes(client, store, co
     assert "Other server only" not in json.dumps(selected)
     assert "DISCORD_BOT_TOKEN" not in json.dumps(data)
     assert selected["config"]["input_channel_id"] == "200"
+    assert selected["config"]["result_mode"] == "channel"
+
+
+async def test_dashboard_shows_scheduled_result_mode(client, store, config):
+    tomorrow = active_day(datetime.now(UTC), config) + timedelta(days=1)
+    store.set_result_mode(config.guild_id, tomorrow, "thread", actor_id=1)
+    response = await client.get("/api/data?server=100")
+    settings = (await response.json())["selected"]["config"]
+    assert settings["result_mode"] == "channel"
+    assert settings["pending_result_mode"] == {
+        "mode": "thread",
+        "effective_day": tomorrow.isoformat(),
+    }
 
 
 @pytest.mark.parametrize("game", list(Game))
