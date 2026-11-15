@@ -6,7 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 import pytest
 
-from daily_games.bot import CommandSyncError, CompetitionCommands, DailyGamesBot, board_embeds
+from daily_games.bot import (
+    CommandSyncError,
+    CompetitionCommands,
+    DailyGamesBot,
+    board_embeds,
+    status_embed,
+)
 from daily_games.models import Game, ParsedResult
 from daily_games.presentation import make_snapshot
 from daily_games.service import accept_result
@@ -296,9 +302,12 @@ async def test_scheduler_waits_until_post_time_then_finalizes_once(bot, store, c
             return cls.current.astimezone(tz) if tz else cls.current.replace(tzinfo=None)
 
     monkeypatch.setattr("daily_games.bot.datetime", Clock)
+    monkeypatch.setattr("daily_games.bot.next_reset", AsyncMock(return_value=None))
+    monkeypatch.setattr("daily_games.bot.current_daily_puzzle", AsyncMock(return_value=1263))
     bot.get_guild = MagicMock(return_value=SimpleNamespace(id=config.guild_id))
     input_channel = channel_mock(config.guild_id)
     output_channel = channel_mock(config.guild_id)
+    output_channel.send.side_effect = [SimpleNamespace(id=9999), SimpleNamespace(id=10000)]
     bot.get_channel = MagicMock(
         side_effect=lambda channel_id: (
             input_channel if channel_id == config.input_channel_id else output_channel
@@ -310,7 +319,75 @@ async def test_scheduler_waits_until_post_time_then_finalizes_once(bot, store, c
     await bot.daily_tick.coro(bot)
     await bot.daily_tick.coro(bot)
     assert store.board(config.guild_id, date(2026, 11, 13))["message_id"] == 9999
-    output_channel.send.assert_awaited_once()
+    assert store.prompt(config.guild_id, date(2026, 11, 14)) is None
+    assert output_channel.send.await_count == 1
+    Clock.current = datetime(2026, 11, 14, 7, 6, tzinfo=UTC)
+    await bot.daily_tick.coro(bot)
+    await bot.daily_tick.coro(bot)
+    assert store.prompt(config.guild_id, date(2026, 11, 14))["message_id"] == 10000
+    assert output_channel.send.await_count == 2
+    assert "Final" in output_channel.send.await_args_list[0].kwargs["embed"].title
+    assert "Play today" in output_channel.send.await_args_list[1].kwargs["embed"].title
+
+
+async def test_daily_links_reconcile_accepted_send_after_crash(bot, store, config):
+    yesterday = date(2026, 11, 13)
+    today = yesterday + timedelta(days=1)
+    now = datetime(2026, 11, 14, 7, 5, tzinfo=UTC)
+    store.freeze(
+        config.guild_id, yesterday, config.output_channel_id, make_snapshot([], yesterday, config)
+    )
+    store.mark_posted(config.guild_id, yesterday, 8000)
+    store.plan_prompt(config.guild_id, today, config.output_channel_id)
+    store.mark_prompt_attempt(config.guild_id, today, now)
+    embed = status_embed(store, config, today, None, scheduled=True)
+    sent = SimpleNamespace(id=8889, author=SimpleNamespace(id=123), embeds=[embed])
+    channel = channel_mock(config.guild_id, [sent])
+    bot.get_channel = MagicMock(return_value=channel)
+    bot._connection.user = SimpleNamespace(id=123)
+
+    await bot.publish_prompt_locked(config, today, now + timedelta(minutes=1))
+
+    channel.send.assert_not_awaited()
+    assert store.prompt(config.guild_id, today)["message_id"] == 8889
+
+
+async def test_daily_links_wait_for_timeguessr_puzzle(bot, store, config, monkeypatch):
+    yesterday = date(2026, 11, 13)
+    today = yesterday + timedelta(days=1)
+    now = datetime(2026, 11, 14, 7, 5, tzinfo=UTC)
+    store.freeze(
+        config.guild_id, yesterday, config.output_channel_id, make_snapshot([], yesterday, config)
+    )
+    store.mark_posted(config.guild_id, yesterday, 8000)
+    channel = channel_mock(config.guild_id)
+    bot.get_channel = MagicMock(return_value=channel)
+    puzzle = AsyncMock(side_effect=[1262, 1263])
+    monkeypatch.setattr("daily_games.bot.current_daily_puzzle", puzzle)
+    monkeypatch.setattr("daily_games.bot.next_reset", AsyncMock(return_value=None))
+
+    await bot.publish_prompt_locked(config, today, now)
+    channel.send.assert_not_awaited()
+    assert store.prompt(config.guild_id, today)["retry_at"] is not None
+    await bot.publish_prompt_locked(config, today, now + timedelta(minutes=3))
+    assert puzzle.await_count == 1
+    await bot.publish_prompt_locked(config, today, now + timedelta(minutes=6))
+    channel.send.assert_awaited_once()
+    assert store.prompt(config.guild_id, today)["message_id"] == 9999
+
+
+async def test_daily_links_do_not_backfill_old_days(bot, store, config):
+    yesterday = date(2026, 11, 13)
+    store.freeze(
+        config.guild_id, yesterday, config.output_channel_id, make_snapshot([], yesterday, config)
+    )
+    store.mark_posted(config.guild_id, yesterday, 8000)
+
+    await bot.publish_prompt_locked(
+        config, yesterday + timedelta(days=1), datetime(2026, 11, 20, 12, tzinfo=UTC)
+    )
+
+    assert store.prompt(config.guild_id, yesterday + timedelta(days=1)) is None
 
 
 async def test_scheduler_does_not_freeze_when_history_recovery_fails(
@@ -337,6 +414,8 @@ async def test_recovery_includes_pre_cutoff_message_before_scheduler_freezes(
             return datetime(2026, 11, 14, 8, tzinfo=UTC)
 
     monkeypatch.setattr("daily_games.bot.datetime", Clock)
+    monkeypatch.setattr("daily_games.bot.next_reset", AsyncMock(return_value=None))
+    monkeypatch.setattr("daily_games.bot.current_daily_puzzle", AsyncMock(return_value=1263))
     bot.get_guild = MagicMock(return_value=SimpleNamespace(id=config.guild_id))
     input_channel = channel_mock(config.guild_id, [incoming(config, message_time)])
     output_channel = channel_mock(config.guild_id)

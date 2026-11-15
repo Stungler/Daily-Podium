@@ -70,6 +70,16 @@ class Store:
                 FOREIGN KEY(guild_id, day) REFERENCES boards(guild_id, day)
             );
             INSERT OR IGNORE INTO schema_version VALUES (2);
+            CREATE TABLE IF NOT EXISTS daily_prompts (
+                guild_id INTEGER NOT NULL REFERENCES servers(guild_id),
+                day TEXT NOT NULL,
+                output_channel_id INTEGER NOT NULL,
+                attempted_at TEXT,
+                retry_at TEXT,
+                message_id INTEGER,
+                PRIMARY KEY(guild_id, day)
+            );
+            INSERT OR IGNORE INTO schema_version VALUES (3);
             CREATE TABLE IF NOT EXISTS puzzle_dates (
                 guild_id INTEGER NOT NULL REFERENCES servers(guild_id),
                 game TEXT NOT NULL,
@@ -87,6 +97,11 @@ class Store:
                 created_at TEXT NOT NULL
             );
         """)
+        # Upgrade installs that created daily_prompts before retry scheduling existed.
+        prompt_columns = {row[1] for row in self.db.execute("PRAGMA table_info(daily_prompts)")}
+        if "retry_at" not in prompt_columns:
+            self.db.execute("ALTER TABLE daily_prompts ADD COLUMN retry_at TEXT")
+        self.db.execute("INSERT OR IGNORE INTO schema_version VALUES (4)")
         self.db.commit()
 
     def close(self):
@@ -247,6 +262,41 @@ class Store:
         with self.db:
             self.db.execute(
                 "UPDATE boards SET message_id=? WHERE guild_id=? AND day=?",
+                (message_id, guild_id, day.isoformat()),
+            )
+
+    def prompt(self, guild_id: int, day: date) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT * FROM daily_prompts WHERE guild_id=? AND day=?",
+            (guild_id, day.isoformat()),
+        ).fetchone()
+
+    def plan_prompt(self, guild_id: int, day: date, channel_id: int):
+        with self.db:
+            self.db.execute(
+                "INSERT OR IGNORE INTO daily_prompts(guild_id,day,output_channel_id) "
+                "VALUES (?,?,?)",
+                (guild_id, day.isoformat(), channel_id),
+            )
+
+    def mark_prompt_attempt(self, guild_id: int, day: date, now: datetime):
+        with self.db:
+            self.db.execute(
+                "UPDATE daily_prompts SET attempted_at=? WHERE guild_id=? AND day=?",
+                (now.isoformat(), guild_id, day.isoformat()),
+            )
+
+    def defer_prompt(self, guild_id: int, day: date, retry_at: datetime):
+        with self.db:
+            self.db.execute(
+                "UPDATE daily_prompts SET retry_at=? WHERE guild_id=? AND day=?",
+                (retry_at.isoformat(), guild_id, day.isoformat()),
+            )
+
+    def mark_prompt_posted(self, guild_id: int, day: date, message_id: int):
+        with self.db:
+            self.db.execute(
+                "UPDATE daily_prompts SET message_id=? WHERE guild_id=? AND day=?",
                 (message_id, guild_id, day.isoformat()),
             )
 

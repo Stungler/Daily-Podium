@@ -129,7 +129,7 @@ Metazooa). Existing `!lb [day]` commands still work; `!lb yesterday sizeitup` al
 Single-game boards show only that game's participants, ranked by its awarded points with
 shared ranks for ties. Points match the combined board, including placement scoring.
 Historical boards use the saved final snapshot; viewing a game does not change it or the
-combined daily posts. No database migration or new setup is required.
+combined daily posts. No manual database migration or new setup is required.
 Leaderboard replies use compact aligned embeds. With public dashboard links configured,
 they show the top 10 and link to the full browser view; without links, they paginate all players.
 `!weekly [day] [game]` and `!monthly [day] [game]` (also slash commands) sum saved
@@ -177,7 +177,7 @@ in each server's results channel to compete there; results do not automatically 
 | `/monthly [day] [game]` | `!monthly [day] [game]` | Month-to-date combined or per-game points from finalized boards |
 | `/stats [member]` | `!stats [@member]` | Personal history in this server from finalized days |
 | `/myday` | — | Private current-day checklist, provisional points, and streaks |
-| `/status` | `!status` | Server settings, expected puzzles, daily challenge links and deadline |
+| `/status` | `!status` | Server settings, expected puzzles, game links, deadline, and TimeGuessr's live next reset |
 | `/setup` | `!setup #results [#boards] [timezone] [cutoff] [scoring]` | Admin configuration |
 | `/puzzle_date` | `!puzzle_date timeguessr 1262 2026-11-13` | Admin date correction for a numbered puzzle |
 | `/void_result` | `!void_result @player metazooa` | Admin correction of a current-day entry |
@@ -228,11 +228,11 @@ Each override names one exact puzzle for that day and server. It does not shift 
 numbering automatically. Size It Up uses the date printed in the Share result.
 
 Metazooa's public client countdown uses midnight UTC; Magnitudle's official FAQ says midnight
-in the game timezone. TimeGuessr's exact reset remains unverified. No guessed reset time
-is hardcoded. This means a game may still offer yesterday's puzzle after this server's
-competition for yesterday has closed. On 2026-11-15 at 01:46 Europe/Berlin, TimeGuessr
-was still showing #1263 from 2026-11-14. `/status` tells players which puzzle counts
-today; wait for the game's next daily reset if it still shows the previous puzzle.
+in the game timezone. TimeGuessr's next-daily timer pointed to 08:00 Europe/Berlin on
+2026-11-15; at 01:46 it still showed #1263 from 2026-11-14. A fixed reset hour is not
+assumed. `/status` reads TimeGuessr's live next-reset timestamp, falling back to a general
+warning if the site is unavailable. A game may still offer yesterday's puzzle after this
+server's competition for yesterday has closed. Wait for the new puzzle before sharing.
 
 Public references:
 
@@ -256,6 +256,15 @@ Daily boards are frozen to durable snapshots, then posted. The final board is on
 in the board channel. A public thread attached to that message holds game highlights, the full
 per-player results, and a weekly summary. The detail content and its delivery state are saved
 in SQLite, so a restart resumes incomplete threads without changing the frozen scores.
+After the final board, the bot posts one compact game-links and status embed for the new
+competition day in the same channel. The final board still posts five minutes after cutoff.
+The game-links message waits until at least 08:05 in that server's timezone and checks the
+official TimeGuessr daily page. If the expected puzzle is still unavailable, it retries every
+five minutes until noon; it then posts with a warning even if TimeGuessr is delayed. Results
+can be submitted as soon as each game's puzzle is available. Delivery state is saved and
+reconciled after a restart; old days are never backfilled with new links posts. The TimeGuessr
+reset shown in this embed comes from the game's live countdown, with a fallback if the site
+is unavailable.
 If the bot lacks thread permissions, the main board still posts; thread delivery is retried
 after permissions are granted. A saved message ID prevents repeated main posts. After a crash
 or ambiguous send timeout, the bot looks for its deterministic board footer in channel history

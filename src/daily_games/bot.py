@@ -10,7 +10,16 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from .calendar import active_day, boundary, closes_at, parse_cutoff, post_due_at, validate_timezone
+from .calendar import (
+    ANCHOR_DAY,
+    ANCHORS,
+    active_day,
+    boundary,
+    closes_at,
+    parse_cutoff,
+    post_due_at,
+    validate_timezone,
+)
 from .discord_views import (
     MAUVE,
     compact_boards,
@@ -30,6 +39,7 @@ from .public_links import leaderboard_links
 from .service import accept_result, requested_day
 from .storage import Store
 from .streaks import streak_lengths, streak_reactions
+from .timeguessr import current_daily_puzzle, next_reset
 
 log = logging.getLogger(__name__)
 ScoringMode = Literal["players_beaten", "placement"]
@@ -43,6 +53,63 @@ class CommandSyncError(RuntimeError):
 
 def board_marker(guild_id: int, day: date) -> str:
     return f"daily-games:{guild_id}:{day.isoformat()}"
+
+
+def prompt_marker(guild_id: int, day: date) -> str:
+    return f"daily-games-prompt:{guild_id}:{day.isoformat()}"
+
+
+def status_embed(
+    store: Store,
+    cfg: ServerConfig,
+    day: date,
+    timeguessr_reset: datetime | None,
+    *,
+    scheduled: bool = False,
+) -> discord.Embed:
+    expected = []
+    for game in Game:
+        override = store.puzzle_for_day(cfg.guild_id, game, day)
+        puzzle = override or (
+            day.isoformat()
+            if game == Game.SIZE_IT_UP
+            else str(ANCHORS[game] + (day - ANCHOR_DAY).days)
+        )
+        label = "expected " if game == Game.TIMEGUESSR else ""
+        expected.append(
+            f"{GAME_TITLES[game]}: {label}`{puzzle}` · [Play daily](<{GAME_URLS[game]}>)"
+        )
+    deadline = int(closes_at(day, cfg).timestamp())
+    if timeguessr_reset:
+        reset_note = (
+            f"TimeGuessr's [live timer](https://timeguessr.com/finalscoredaily) says its next "
+            f"daily starts <t:{int(timeguessr_reset.timestamp())}:f>. "
+            "If it still shows the previous puzzle, wait; that puzzle cannot count "
+            "for this competition day."
+        )
+    else:
+        reset_note = (
+            "TimeGuessr may reset later than this server's cutoff. "
+            "Check its timer and wait for the new puzzle before sharing."
+        )
+    embed = discord.Embed(
+        title=f"{'Play today' if scheduled else 'Competition'} · {day}",
+        color=MAUVE,
+        description=(
+            f"**Results:** <#{cfg.input_channel_id}> · **Boards:** <#{cfg.output_channel_id}>\n"
+            f"**Deadline:** <t:{deadline}:f> (<t:{deadline}:R>)\n"
+            + "\n".join(expected)
+            + f"\n\n{reset_note}"
+        ),
+    )
+    embed.set_footer(
+        text=(
+            prompt_marker(cfg.guild_id, day)
+            if scheduled
+            else f"{cfg.timezone} · {cfg.cutoff} · {cfg.scoring} · !weekly for weekly stats"
+        )
+    )
+    return embed
 
 
 def board_embeds(
@@ -329,6 +396,7 @@ class DailyGamesBot(commands.Bot):
                             )
                             self.store.freeze(cfg.guild_id, day, cfg.output_channel_id, snapshot)
                         await self.publish_locked(cfg, day, now)
+                        await self.publish_prompt_locked(cfg, day + timedelta(days=1), now)
                         day += timedelta(days=1)
             except Exception:
                 errors += 1
@@ -461,6 +529,61 @@ class DailyGamesBot(commands.Bot):
         log.info("Daily board posted/reconciled: server=%s day=%s", cfg.guild_id, day)
         if details:
             await self.publish_details_safely(cfg, day, now)
+
+    async def publish_prompt_locked(self, cfg: ServerConfig, day: date, now: datetime):
+        """Post today's links after the previous board, reconciling ambiguous sends."""
+        if day != active_day(now, cfg):
+            return
+        if now < boundary(day, cfg.timezone, "08:05").astimezone(UTC):
+            return
+        board = self.store.board(cfg.guild_id, day - timedelta(days=1))
+        if board is None or board["message_id"] is None:
+            return
+        self.store.plan_prompt(cfg.guild_id, day, board["output_channel_id"])
+        prompt = self.store.prompt(cfg.guild_id, day)
+        if prompt["message_id"] is not None:
+            return
+        if prompt["retry_at"] and datetime.fromisoformat(prompt["retry_at"]) > now:
+            return
+        channel = self.get_channel(prompt["output_channel_id"])
+        if not isinstance(channel, discord.TextChannel) or channel.guild.id != cfg.guild_id:
+            raise ValueError("Daily links channel is unavailable.")
+        marker = prompt_marker(cfg.guild_id, day)
+        if prompt["attempted_at"]:
+            attempt = datetime.fromisoformat(prompt["attempted_at"])
+            async for message in channel.history(
+                limit=None, after=attempt - timedelta(seconds=5), oldest_first=True
+            ):
+                if message.author.id == self.user.id and any(
+                    embed.footer.text == marker for embed in message.embeds
+                ):
+                    self.store.mark_prompt_posted(cfg.guild_id, day, message.id)
+                    return
+        expected_puzzle = int(
+            self.store.puzzle_for_day(cfg.guild_id, Game.TIMEGUESSR, day)
+            or ANCHORS[Game.TIMEGUESSR] + (day - ANCHOR_DAY).days
+        )
+        live_puzzle = await current_daily_puzzle()
+        if (
+            live_puzzle is not None
+            and live_puzzle < expected_puzzle
+            and now < boundary(day, cfg.timezone, "12:00").astimezone(UTC)
+        ):
+            self.store.defer_prompt(cfg.guild_id, day, now + timedelta(minutes=5))
+            log.info(
+                "Daily links waiting for TimeGuessr: server=%s day=%s live=%s expected=%s",
+                cfg.guild_id,
+                day,
+                live_puzzle,
+                expected_puzzle,
+            )
+            return
+        embed = status_embed(self.store, cfg, day, await next_reset(now), scheduled=True)
+        if not prompt["attempted_at"]:
+            self.store.mark_prompt_attempt(cfg.guild_id, day, now)
+        message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        self.store.mark_prompt_posted(cfg.guild_id, day, message.id)
+        log.info("Daily links posted/reconciled: server=%s day=%s", cfg.guild_id, day)
 
     async def publish_details_safely(self, cfg: ServerConfig, day: date, now: datetime):
         details = self.store.details(cfg.guild_id, day)
@@ -898,34 +1021,9 @@ class CompetitionCommands(commands.Cog):
     )
     @commands.guild_only()
     async def status(self, ctx: commands.Context):
-        from .calendar import ANCHOR_DAY, ANCHORS
-
         cfg = self.config(ctx)
         today = active_day(datetime.now(UTC), cfg)
-        expected = []
-        for game in Game:
-            override = self.bot.store.puzzle_for_day(cfg.guild_id, game, today)
-            puzzle = override or (
-                today.isoformat()
-                if game == Game.SIZE_IT_UP
-                else str(ANCHORS[game] + (today - ANCHOR_DAY).days)
-            )
-            expected.append(f"{GAME_TITLES[game]}: `{puzzle}` · [Play daily](<{GAME_URLS[game]}>)")
-        deadline = int(closes_at(today, cfg).timestamp())
-        embed = discord.Embed(
-            title=f"Competition · {today}",
-            color=MAUVE,
-            description=(
-                f"**Results:** <#{cfg.input_channel_id}> · **Boards:** <#{cfg.output_channel_id}>\n"
-                f"**Deadline:** <t:{deadline}:f> (<t:{deadline}:R>)\n"
-                + "\n".join(expected)
-                + "\n\n*TimeGuessr may still show yesterday's puzzle after this server's cutoff."
-                " Wait for its next daily reset before submitting.*"
-            ),
-        )
-        embed.set_footer(
-            text=f"{cfg.timezone} · {cfg.cutoff} · {cfg.scoring} · !weekly for weekly stats"
-        )
+        embed = status_embed(self.bot.store, cfg, today, await next_reset(datetime.now(UTC)))
         await ctx.send(embed=embed, ephemeral=True)
 
     @commands.hybrid_command(name="puzzle_date", description="Correct a numbered puzzle's date.")

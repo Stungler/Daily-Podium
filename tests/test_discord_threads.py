@@ -318,12 +318,48 @@ def test_additive_schema_preserves_old_scores(tmp_path, config):
     with old.db:
         old.db.execute("DROP TABLE board_details")
         old.db.execute("DELETE FROM schema_version WHERE version=2")
+        old.db.execute("DROP TABLE daily_prompts")
+        old.db.execute("DELETE FROM schema_version WHERE version=3")
+        old.db.execute("DELETE FROM schema_version WHERE version=4")
     before = old.board(100, DAY)["snapshot"]
     old.close()
     upgraded = Store(path)
     try:
         assert upgraded.board(100, DAY)["snapshot"] == before
         assert upgraded.details(100, DAY) is None
-        assert upgraded.db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
+        assert upgraded.prompt(100, DAY) is None
+        assert upgraded.db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 4
+    finally:
+        upgraded.close()
+
+
+def test_prompt_retry_upgrade_preserves_existing_delivery_state(tmp_path, config):
+    path = tmp_path / "prompt-upgrade.sqlite3"
+    old = Store(path)
+    old.configure(config, actor_id=1)
+    with old.db:
+        old.db.execute("DROP TABLE daily_prompts")
+        old.db.execute("""
+            CREATE TABLE daily_prompts (
+                guild_id INTEGER NOT NULL REFERENCES servers(guild_id),
+                day TEXT NOT NULL,
+                output_channel_id INTEGER NOT NULL,
+                attempted_at TEXT,
+                message_id INTEGER,
+                PRIMARY KEY(guild_id, day)
+            )
+        """)
+        old.db.execute(
+            "INSERT INTO daily_prompts(guild_id,day,output_channel_id,message_id) VALUES (?,?,?,?)",
+            (100, DAY.isoformat(), 300, 7000),
+        )
+        old.db.execute("DELETE FROM schema_version WHERE version=4")
+    old.close()
+
+    upgraded = Store(path)
+    try:
+        assert upgraded.prompt(100, DAY)["message_id"] == 7000
+        assert upgraded.prompt(100, DAY)["retry_at"] is None
+        assert upgraded.db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 4
     finally:
         upgraded.close()
