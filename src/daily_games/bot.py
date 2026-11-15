@@ -21,6 +21,7 @@ from .discord_views import (
     weekly_embed,
     weekly_snapshot,
 )
+from .health import HealthReporter
 from .models import GAME_TITLES, GAME_URLS, Game, ServerConfig
 from .parsers import parse_message
 from .periods import period_snapshot, period_start
@@ -110,6 +111,16 @@ class DailyGamesBot(commands.Bot):
         self.guild_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.needs_recovery = {cfg.guild_id for cfg in store.configs()}
         self.tree.on_error = self.on_app_command_error
+        database = store.db.execute("PRAGMA database_list").fetchone()[2]
+        self.health = HealthReporter(Path(database)) if database else None
+
+    def report_health(self, **changes):
+        if self.health is None:
+            return
+        try:
+            self.health.record(**changes)
+        except OSError:
+            log.warning("Could not update local bot health record", exc_info=True)
 
     async def setup_hook(self):
         await self.add_cog(CompetitionCommands(self))
@@ -141,9 +152,11 @@ class DailyGamesBot(commands.Bot):
 
     async def close(self):
         self.daily_tick.cancel()
+        self.report_health(gateway="stopped")
         await super().close()
 
     async def on_ready(self):
+        self.report_health(gateway="connected", gateway_at=datetime.now(UTC).isoformat())
         log.info(
             "Connected as %s (%s); %s configured servers",
             self.user,
@@ -159,9 +172,11 @@ class DailyGamesBot(commands.Bot):
         await self.recover_all()
 
     async def on_disconnect(self):
+        self.report_health(gateway="disconnected")
         self.needs_recovery.update(cfg.guild_id for cfg in self.store.configs())
 
     async def on_resumed(self):
+        self.report_health(gateway="connected", gateway_at=datetime.now(UTC).isoformat())
         await self.recover_all()
 
     async def recover_all(self):
@@ -297,6 +312,7 @@ class DailyGamesBot(commands.Bot):
     @tasks.loop(seconds=30, reconnect=True)
     async def daily_tick(self):
         now = datetime.now(UTC)
+        errors = 0
         for cfg in self.store.configs():
             if not self.get_guild(cfg.guild_id):
                 continue
@@ -315,7 +331,9 @@ class DailyGamesBot(commands.Bot):
                         await self.publish_locked(cfg, day, now)
                         day += timedelta(days=1)
             except Exception:
+                errors += 1
                 log.exception("Daily scheduling failed for server %s; will retry", cfg.guild_id)
+        self.report_health(scheduler_at=now.isoformat(), scheduler_errors=errors)
 
     @daily_tick.before_loop
     async def before_daily_tick(self):
@@ -435,6 +453,11 @@ class DailyGamesBot(commands.Bot):
             )
             last_id = message.id
         self.store.mark_posted(cfg.guild_id, day, last_id)
+        self.report_health(
+            last_final_post_at=datetime.now(UTC).isoformat(),
+            last_final_post_day=day.isoformat(),
+            last_final_post_server_id=str(cfg.guild_id),
+        )
         log.info("Daily board posted/reconciled: server=%s day=%s", cfg.guild_id, day)
         if details:
             await self.publish_details_safely(cfg, day, now)
@@ -577,6 +600,7 @@ class CompetitionCommands(commands.Cog):
                 "`!weekly [day] [game]` · weekly points from finalized days\n"
                 "`!monthly [day] [game]` · monthly points from finalized days\n"
                 "`!stats [@player]` · personal stats and streaks from finalized days\n"
+                "`/myday` · your accepted games and streaks, privately\n"
                 "`!games` · play links · `!status` · puzzles and deadline\n"
                 "`!ping` · connection check"
             ),
@@ -614,6 +638,52 @@ class CompetitionCommands(commands.Cog):
                 + "\nPlay, then paste your **Share** result in the results channel.",
             )
         )
+
+    @app_commands.command(name="myday", description="Privately check your accepted games today.")
+    @app_commands.guild_only()
+    async def myday(self, interaction: discord.Interaction):
+        cfg = self.bot.store.config(interaction.guild_id) if interaction.guild_id else None
+        if cfg is None:
+            await interaction.response.send_message(
+                "An admin must run `/setup` before results can be recorded here.", ephemeral=True
+            )
+            return
+        today = active_day(datetime.now(UTC), cfg)
+        snapshot = make_snapshot(self.bot.store.results(cfg.guild_id, today), today, cfg)
+        player = next(
+            (row for row in snapshot["rows"] if row["user_id"] == interaction.user.id), None
+        )
+        results = player["games"] if player else {}
+        game_days = {
+            game: self.bot.store.player_game_days(cfg.guild_id, interaction.user.id, game, today)
+            for game in Game
+        }
+        overall = streak_lengths(set().union(*game_days.values()), today)
+        deadline = int(closes_at(today, cfg).timestamp())
+        embed = discord.Embed(
+            title=f"Your games · {today}",
+            description=(
+                f"**{len(results)}/3 accepted** · deadline <t:{deadline}:R>\n"
+                f"🔥 Any-game streak: **{overall['current']}** current / "
+                f"**{overall['best']}** best\n"
+                "Points are provisional until the daily board is finalized."
+            ),
+            color=MAUVE,
+        )
+        for game in Game:
+            result = results.get(game.value)
+            status = (
+                f"✅ Recorded · {score_label(game, result)}"
+                if result
+                else f"— Missing · [Play daily]({GAME_URLS[game]})"
+            )
+            streak = streak_lengths(game_days[game], today)
+            embed.add_field(
+                name=GAME_TITLES[game],
+                value=(f"{status}\n🔥 {streak['current']} current / {streak['best']} best"),
+                inline=False,
+            )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @commands.hybrid_command(name="setup", description="Configure this server's daily competition.")
     @commands.guild_only()
@@ -803,7 +873,10 @@ class CompetitionCommands(commands.Cog):
             self.bot.store.finalized_snapshots(
                 cfg.guild_id, period_start(selected, period), selected
             ),
-            selected, cfg.started_day, period, selected_game,
+            selected,
+            cfg.started_day,
+            period,
+            selected_game,
         )
         await ctx.send(embed=period_embed(summary))
 
@@ -816,9 +889,7 @@ class CompetitionCommands(commands.Cog):
         cfg = self.config(ctx)
         target = member or ctx.author
         snapshots = self.bot.store.finalized_snapshots(cfg.guild_id, cfg.started_day, date.max)
-        stats = player_stats_snapshot(
-            snapshots, target.id, active_day(datetime.now(UTC), cfg)
-        )
+        stats = player_stats_snapshot(snapshots, target.id, active_day(datetime.now(UTC), cfg))
         await ctx.send(embed=player_stats_embed(stats, target.display_name))
 
     @commands.hybrid_command(

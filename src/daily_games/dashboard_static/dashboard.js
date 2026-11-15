@@ -25,6 +25,10 @@ function age(seconds) {
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
   return `${Math.floor(seconds / 86400)}d ${Math.floor(seconds % 86400 / 3600)}h`;
 }
+function since(value, zone) {
+  if (!value) return "Not yet recorded";
+  return `${clock(value, zone)} · ${age((Date.now() - new Date(value).getTime()) / 1000)} ago`;
+}
 function gameScore(game, result) {
   if (!result) return "—";
   if (!result.solved) return "Failed";
@@ -165,8 +169,20 @@ function render(data) {
   const bot = data.bot;
   text("process-state", bot.state === "running" ? `Running · ${bot.processes.map((item) => item.pid).join(", ")}` : bot.state === "unknown" ? "Unknown" : "Not detected");
   $("process-state").className = bot.state === "running" ? "good" : "warn";
-  $("health-dot").className = `health-light ${bot.state === "running" ? "running" : ""}`;
+  const healthy = bot.state === "running" && bot.gateway === "connected" && bot.scheduler_state === "recent";
+  $("health-dot").className = `health-light ${healthy ? "running" : ""}`;
   text("uptime", bot.processes.length ? age(bot.processes[0].uptime_seconds) : "—");
+  text("gateway-state", {connected: "Connected", disconnected: "Disconnected", starting: "Starting", stopped: "Stopped", stale: "Signal stale", unavailable: "Bot not running", not_measured: "Not measured"}[bot.gateway] || "Unknown");
+  $("gateway-state").className = bot.gateway === "connected" ? "good" : "warn";
+  text("gateway-at", since(bot.gateway_at, selected.config.timezone));
+  text("scheduler-state", bot.scheduler_state === "recent" ? `Running · ${since(bot.scheduler_at, selected.config.timezone)}` : bot.scheduler_state === "error" ? `${bot.scheduler_errors} server error(s) · ${since(bot.scheduler_at, selected.config.timezone)}` : bot.scheduler_state === "stale" ? `Signal stale · ${since(bot.scheduler_at, selected.config.timezone)}` : "Not measured");
+  $("scheduler-state").className = bot.scheduler_state === "recent" ? "good" : "warn";
+  const lastPosted = selected.history.find((item) => item.posted);
+  text("last-final-post", bot.last_final_post_at && bot.last_final_post_server_id === selected.server_id ? `${bot.last_final_post_day} · ${since(bot.last_final_post_at, selected.config.timezone)}` : lastPosted ? `${lastPosted.day} · time not recorded` : "No final post yet");
+  text("local-backup", since(data.backup.local_at, selected.config.timezone));
+  text("offsite-backup", since(data.backup.offsite_at, selected.config.timezone));
+  $("local-backup").className = data.backup.local_at && Date.now() - new Date(data.backup.local_at).getTime() < 36 * 3600000 ? "good" : "warn";
+  $("offsite-backup").className = data.backup.offsite_at && Date.now() - new Date(data.backup.offsite_at).getTime() < 36 * 3600000 ? "good" : "warn";
   text("database-state", "Readable");
   $("database-state").className = "good";
   text("latest-result", selected.recent.length ? clock(selected.recent[0].submitted_at, selected.config.timezone) : "No results yet");

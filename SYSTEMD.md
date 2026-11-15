@@ -54,6 +54,10 @@ It retains successful local archives for 30 days. At 04:00,
 `daily-podium-offsite.timer` copies the encrypted archives to
 `gdrive:daily-podium-backups` and checks remote checksums. Older remote copies
 are retained; the sync does not delete them. The service retries failed uploads.
+The private dashboard reads the newest verified archive's timestamp and the local
+`data/offsite-last-success.txt` marker written after a successful remote check.
+The bot writes `data/bot-health.json` for connection, scheduler, and final-post
+status. Both status files are local and ignored by Git.
 
 Archives are under `/home/stefan/backups/daily-podium/` (directory mode 700,
 files mode 600). They use OpenSSL AES-256-CBC with PBKDF2 and 200,000 iterations.

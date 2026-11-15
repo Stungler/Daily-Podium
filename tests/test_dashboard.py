@@ -118,6 +118,8 @@ async def test_live_board_matches_bot_and_preserves_snowflakes(client, store, co
     data = await response.json()
     selected = data["selected"]
     assert data["bot"]["gateway"] == "not_measured"
+    assert data["bot"]["scheduler_state"] == "not_measured"
+    assert set(data["backup"]) == {"local_at", "offsite_at"}
     assert data["bot"]["state"] == "running"
     assert selected["server_id"] == "100"
     assert selected["today_counts"] == {
@@ -131,8 +133,7 @@ async def test_live_board_matches_bot_and_preserves_snowflakes(client, store, co
     assert {
         **selected["board"],
         "rows": [
-            {k: v for k, v in row.items() if k != "streak"}
-            for row in selected["board"]["rows"]
+            {k: v for k, v in row.items() if k != "streak"} for row in selected["board"]["rows"]
         ],
     } == expected
     assert all(row["streak"]["current"] == 1 for row in selected["board"]["rows"])
@@ -153,8 +154,7 @@ async def test_game_views_match_existing_projection(client, store, config, sampl
     assert {
         **selected["board"],
         "rows": [
-            {k: v for k, v in row.items() if k != "streak"}
-            for row in selected["board"]["rows"]
+            {k: v for k, v in row.items() if k != "streak"} for row in selected["board"]["rows"]
         ],
     } == expected
 

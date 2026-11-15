@@ -208,9 +208,7 @@ def test_public_period_requires_finalized_global_day_and_hides_ids(public_setup,
     slug = server_slug(KEY, 100)
     server = public_data(path, KEY, slug, day.isoformat(), "timeguessr", "month")
     assert server["period_board"]["finalized_days"] == 1
-    assert {row["name"] for row in server["period_board"]["rows"]} == {
-        "Player 1", "Player 2"
-    }
+    assert {row["name"] for row in server["period_board"]["rows"]} == {"Player 1", "Player 2"}
     global_pending = public_data(path, KEY, "global", day.isoformat(), "all", "month")
     assert global_pending["period_board"]["finalized_days"] == 0
     assert global_pending["period_board"]["rows"] == []

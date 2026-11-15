@@ -121,6 +121,7 @@ then request the standings:
 !monthly metazooa
 !stats
 !stats @friend
+/myday
 ```
 
 `/leaderboard` offers `day` and `game` options (All games, TimeGuessr, Size It Up,
@@ -153,6 +154,9 @@ for several games, it gets 🔥 without a number because reactions cannot label
 separate game streaks on the same message. `!stats` and both dashboards show exact
 current/best numbers. Dashboard game tabs show that game's streak; Combined shows
 the any-game streak. Historical and final dashboard streaks use frozen boards.
+`/myday` is a private slash command showing your three accepted games for the
+current competition day, missing game links, provisional points, cutoff, and
+current/best streaks. It sends no new message to the channel.
 When public dashboard links are configured, leaderboard replies also link to
 this server's full browser board and the global leaderboard. The global board
 counts each player's earliest accepted submission per game and date across
@@ -172,6 +176,7 @@ in each server's results channel to compete there; results do not automatically 
 | `/weekly [day] [game]` | `!weekly [day] [game]` | Week-to-date combined or per-game points from finalized boards |
 | `/monthly [day] [game]` | `!monthly [day] [game]` | Month-to-date combined or per-game points from finalized boards |
 | `/stats [member]` | `!stats [@member]` | Personal history in this server from finalized days |
+| `/myday` | — | Private current-day checklist, provisional points, and streaks |
 | `/status` | `!status` | Server settings, expected puzzles, daily challenge links and deadline |
 | `/setup` | `!setup #results [#boards] [timezone] [cutoff] [scoring]` | Admin configuration |
 | `/puzzle_date` | `!puzzle_date timeguessr 1262 2026-11-13` | Admin date correction for a numbered puzzle |

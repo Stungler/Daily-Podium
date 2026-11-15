@@ -225,9 +225,7 @@ def public_data(
                     except json.JSONDecodeError as exc:
                         raise sqlite3.DatabaseError("Invalid saved board.") from exc
                 started = cfg.started_day
-            period_board = period_snapshot(
-                saved_days, selected_day, started, period, selected_game
-            )
+            period_board = period_snapshot(saved_days, selected_day, started, period, selected_game)
             period_board["rows"] = [
                 {
                     **{field: row[field] for field in ("rank", "name", "points", "days", "wins")},

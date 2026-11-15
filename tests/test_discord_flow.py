@@ -52,7 +52,15 @@ async def test_hybrid_commands_register_without_discord_connection(bot):
     await bot.add_cog(CompetitionCommands(bot))
     assert bot.get_command("lb") is bot.get_command("leaderboard")
     names = {command.name for command in bot.tree.get_commands()}
-    assert {"leaderboard", "stats", "setup", "status", "puzzle_date", "void_result"} <= names
+    assert {
+        "leaderboard",
+        "stats",
+        "myday",
+        "setup",
+        "status",
+        "puzzle_date",
+        "void_result",
+    } <= names
     # Serializing slash payloads catches unsupported parameter annotations/options.
     for command in bot.tree.get_commands():
         payload = command.to_dict(bot.tree)
@@ -132,9 +140,7 @@ async def test_next_day_result_advances_only_its_game_streak(bot, store, config,
     )
     await bot.ingest(first, config, feedback=True)
     await bot.ingest(second, config, feedback=True)
-    assert [call.args[0] for call in second.add_reaction.await_args_list] == [
-        "✅", "🔥", "2️⃣"
-    ]
+    assert [call.args[0] for call in second.add_reaction.await_args_list] == ["✅", "🔥", "2️⃣"]
     second.reply.assert_not_awaited()
 
 

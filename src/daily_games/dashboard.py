@@ -16,6 +16,7 @@ from aiohttp import web
 from dotenv import load_dotenv
 
 from .calendar import active_day, closes_at, post_due_at
+from .health import health_path, read_health
 from .models import GAME_TITLES, Game, ServerConfig, Submission
 from .periods import period_snapshot, period_start
 from .presentation import game_snapshot, make_snapshot
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 class DashboardSettings(NamedTuple):
     database: Path
     project: Path
+    backup_dir: Path | None = None
 
 
 class ServerNotFound(LookupError):
@@ -97,6 +99,83 @@ def process_status(project: Path) -> dict:
     }
 
 
+def timestamp(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+        return parsed.astimezone(UTC).isoformat() if parsed.tzinfo else None
+    except ValueError:
+        return None
+
+
+def observed_health(settings: DashboardSettings, process: dict, now: datetime) -> dict:
+    report = read_health(health_path(settings.database)) or {}
+    matching = process["state"] == "running" and str(report.get("pid")) in {
+        item["pid"] for item in process["processes"]
+    }
+    updated = timestamp(report.get("updated_at")) if matching else None
+    fresh = (
+        updated is not None and -5 <= (now - datetime.fromisoformat(updated)).total_seconds() < 120
+    )
+    gateway = report.get("gateway") if matching else None
+    if gateway not in {"connected", "disconnected", "starting", "stopped"}:
+        gateway = "not_measured"
+    if gateway == "connected" and not fresh:
+        gateway = "stale"
+    if process["state"] != "running":
+        gateway = "unavailable"
+    scheduler_at = timestamp(report.get("scheduler_at")) if matching else None
+    scheduler_recent = (
+        scheduler_at is not None
+        and -5 <= (now - datetime.fromisoformat(scheduler_at)).total_seconds() < 120
+    )
+    errors = report.get("scheduler_errors") if matching else None
+    return {
+        **process,
+        "gateway": gateway,
+        "gateway_at": timestamp(report.get("gateway_at")) if matching else None,
+        "scheduler_at": scheduler_at,
+        "scheduler_state": (
+            "error"
+            if scheduler_recent and isinstance(errors, int) and errors > 0
+            else "recent"
+            if scheduler_recent
+            else "stale"
+            if scheduler_at
+            else "not_measured"
+        ),
+        "scheduler_errors": errors if isinstance(errors, int) and errors >= 0 else None,
+        "last_final_post_at": timestamp(report.get("last_final_post_at")),
+        "last_final_post_day": report.get("last_final_post_day")
+        if isinstance(report.get("last_final_post_day"), str)
+        else None,
+        "last_final_post_server_id": report.get("last_final_post_server_id")
+        if isinstance(report.get("last_final_post_server_id"), str)
+        else None,
+    }
+
+
+def backup_status(settings: DashboardSettings) -> dict:
+    try:
+        archives = (
+            list(settings.backup_dir.glob("daily-podium-*.tar.gz.enc"))
+            if settings.backup_dir and settings.backup_dir.is_dir()
+            else []
+        )
+        latest = max((item.stat().st_mtime for item in archives), default=None)
+    except OSError:
+        latest = None
+    try:
+        offsite = (settings.database.parent / "offsite-last-success.txt").read_text().strip()
+    except OSError:
+        offsite = None
+    return {
+        "local_at": datetime.fromtimestamp(latest, UTC).isoformat() if latest else None,
+        "offsite_at": timestamp(offsite),
+    }
+
+
 def config_from_row(row: sqlite3.Row) -> ServerConfig:
     return ServerConfig(
         row["guild_id"],
@@ -152,7 +231,8 @@ def read_data(
         response = {
             "generated_at": now.isoformat(),
             "database": "available",
-            "bot": process_status(settings.project),
+            "bot": observed_health(settings, process_status(settings.project), now),
+            "backup": backup_status(settings),
             "games": [{"id": item.value, "name": GAME_TITLES[item]} for item in Game],
             "servers": [{"id": str(cfg.guild_id)} for cfg in configs],
             "selected": None,
@@ -198,8 +278,7 @@ def read_data(
         period_board = None
         if period != "day":
             saved_days = db.execute(
-                "SELECT snapshot FROM boards WHERE guild_id=? AND day BETWEEN ? AND ? "
-                "ORDER BY day",
+                "SELECT snapshot FROM boards WHERE guild_id=? AND day BETWEEN ? AND ? ORDER BY day",
                 (
                     cfg.guild_id,
                     period_start(selected_day, period).isoformat(),
@@ -209,7 +288,10 @@ def read_data(
             try:
                 period_board = period_snapshot(
                     [json.loads(row["snapshot"]) for row in saved_days],
-                    selected_day, cfg.started_day, period, selected_game,
+                    selected_day,
+                    cfg.started_day,
+                    period,
+                    selected_game,
                 )
             except json.JSONDecodeError as exc:
                 raise sqlite3.DatabaseError("Invalid frozen board.") from exc
@@ -318,8 +400,10 @@ async def data_handler(request: web.Request) -> web.Response:
         )
     except (ValueError, OverflowError):
         return web.json_response(
-            {"error": "Choose a valid server, game, period, and day "
-             "(today, yesterday, or YYYY-MM-DD)."},
+            {
+                "error": "Choose a valid server, game, period, and day "
+                "(today, yesterday, or YYYY-MM-DD)."
+            },
             status=400,
         )
     except ServerNotFound:
@@ -347,9 +431,15 @@ async def asset_handler(request: web.Request) -> web.Response:
     )
 
 
-def create_app(database: Path, project: Path | None = None) -> web.Application:
+def create_app(
+    database: Path, project: Path | None = None, backup_dir: Path | None = None
+) -> web.Application:
     app = web.Application(middlewares=[response_headers], client_max_size=1024)
-    app[SETTINGS] = DashboardSettings(database.resolve(), (project or Path.cwd()).resolve())
+    app[SETTINGS] = DashboardSettings(
+        database.resolve(),
+        (project or Path.cwd()).resolve(),
+        (backup_dir or Path.home() / "backups/daily-podium").resolve(),
+    )
     app.router.add_get("/", index_handler)
     app.router.add_get("/assets/{name}", asset_handler)
     app.router.add_get("/api/data", data_handler)
@@ -378,11 +468,21 @@ def main():
         type=Path,
         default=Path(os.getenv("DATABASE_PATH", "data/daily-games.sqlite3")),
     )
+    parser.add_argument(
+        "--backup-dir",
+        type=Path,
+        default=Path(os.getenv("DAILY_PODIUM_BACKUP_DIR", Path.home() / "backups/daily-podium")),
+    )
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("Port must be between 1 and 65535.")
     logging.basicConfig(level=logging.INFO)
-    web.run_app(create_app(args.database), host=args.host, port=args.port, access_log=None)
+    web.run_app(
+        create_app(args.database, backup_dir=args.backup_dir),
+        host=args.host,
+        port=args.port,
+        access_log=None,
+    )
 
 
 if __name__ == "__main__":

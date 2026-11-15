@@ -16,4 +16,9 @@ rclone copy "$backup_dir" "$remote" \
   --include 'daily-podium-*.tar.gz.enc' --checksum --immutable --max-duration 20m
 rclone check "$backup_dir" "$remote" \
   --include 'daily-podium-*.tar.gz.enc' --one-way --max-duration 20m
+marker_dir=/home/stefan/dev/Daily-Podium/data
+marker=$(mktemp "$marker_dir/.offsite-last-success.XXXXXX")
+trap 'rm -f "$marker"' EXIT
+date -u '+%Y-%m-%dT%H:%M:%SZ' > "$marker"
+mv "$marker" "$marker_dir/offsite-last-success.txt"
 echo "Verified ${#archives[@]} encrypted Daily Podium archives on Google Drive."

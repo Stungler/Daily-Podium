@@ -16,7 +16,8 @@ the systemd unit before using the same port manually.
 ## Start on bee
 
 The dashboard uses aiohttp, already installed by `requirements.lock`. No Node,
-frontend build, new tokens, database migration, or bot restart is needed.
+frontend build, new tokens, or database migration is needed. The bot must be
+restarted once after deploying the health reporter to publish live signals.
 
 Run from the project root so `.env`, relative database paths, and process detection
 refer to this checkout:
@@ -73,6 +74,7 @@ options taking precedence. It does not need or display `DISCORD_BOT_TOKEN`.
 | Setting | Default | CLI override |
 | --- | --- | --- |
 | `DATABASE_PATH` | `data/daily-games.sqlite3` | `--database /absolute/path.sqlite3` |
+| `DAILY_PODIUM_BACKUP_DIR` | `~/backups/daily-podium` | `--backup-dir /absolute/path` |
 | `DASHBOARD_HOST` | `127.0.0.1` | `--host 100.118.9.35` |
 | `DASHBOARD_PORT` | `8765` | `--port 8765` |
 
@@ -101,22 +103,28 @@ Using `python -m daily_games.dashboard` works with the existing editable install
 - Whether each final board has a recorded Discord message ID. A pending board
   is not automatically treated as a posting failure.
 - Timezone, cutoff, scoring, channel IDs, and today's board due time.
-- Bot process detection for this checkout and database read availability.
+- Bot process detection, current Discord connection, scheduler heartbeat/errors,
+  latest final post, and database read availability. Connection and scheduler
+  signals are trusted only when the local health record matches the live bot PID.
+- Latest verified local backup and latest successful offsite checksum check.
 
 The page refreshes every 20 seconds. A failed refresh retains the last successful
 view with an explicit stale-data banner and marks status as unknown.
 
-**Bot process detected does not prove Discord connectivity.** The current bot
-does not persist Gateway readiness, latency, or heartbeat telemetry, so the page
-explicitly shows Discord connection as “Not measured.” No bot changes or restart
-were required for these observations.
+The bot writes `data/bot-health.json` locally on Gateway, scheduler, and final-post
+events. The dashboard treats a connected signal as stale after two minutes without
+an update. The backup job creates a verified encrypted archive before its file is
+visible; the offsite script writes `data/offsite-last-success.txt` only after
+`rclone check` succeeds. Neither status file contains tokens. The dashboard shows
+“Not measured” until the bot has been restarted into a version that writes health
+signals; offsite status appears after the next successful copy/check run.
 
 ## Manual acceptance check
 
 1. Start only the dashboard with the command above; keep the existing bot running.
 2. Open its Tailscale URL from another tailnet device and confirm your server ID.
-3. Compare Combined and each game tab against Discord's `!lb` commands. An older
-   running bot needs a later manual restart to load the individual-game commands.
+3. Compare Combined and each game tab against Discord's `!lb` commands. Health
+   signals appear after the bot starts with the updated code.
 4. Submit a result through Discord and confirm it appears after refreshing.
 5. Select yesterday or a finalized date and verify final status and posting state.
 6. Check the page on a narrow/mobile screen.

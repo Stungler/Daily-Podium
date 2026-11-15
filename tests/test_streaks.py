@@ -15,12 +15,14 @@ def test_streaks_count_once_per_day_and_survive_open_day():
 def test_game_streaks_include_failures_but_not_missing_games():
     first = date(2026, 11, 13)
     snapshots = [
-        {"day": first.isoformat(), "rows": [
-            {"user_id": 7, "games": {"timeguessr": {"solved": True}}}
-        ]},
-        {"day": (first + timedelta(days=1)).isoformat(), "rows": [
-            {"user_id": 7, "games": {"metazooa": {"solved": False}}}
-        ]},
+        {
+            "day": first.isoformat(),
+            "rows": [{"user_id": 7, "games": {"timeguessr": {"solved": True}}}],
+        },
+        {
+            "day": (first + timedelta(days=1)).isoformat(),
+            "rows": [{"user_id": 7, "games": {"metazooa": {"solved": False}}}],
+        },
     ]
     summary = streak_summaries(snapshots, first + timedelta(days=2))[7]
     assert summary["all"] == {"current": 2, "best": 2}

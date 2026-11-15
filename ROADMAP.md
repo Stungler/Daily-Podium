@@ -44,15 +44,12 @@ The services and backup timer are active; see [SYSTEMD.md](SYSTEMD.md).
    current/best streaks for any game and each game, and emoji milestones on
    newly accepted results. Missing a closed day breaks the run; recorded
    failures count as participation.
-3. **Optional deadline reminders.** A configurable reminder before cutoff,
-   showing missing games. Avoid unsolicited individual mentions by default;
-   persist delivery state so restarts do not repeat reminders.
-4. **Clearer rejected-submission feedback.** Review existing feedback and improve
-   explanations for duplicates, wrong puzzle dates, unsupported Share text, and
-   submissions after cutoff. Provide a useful next step for the player.
-5. **Full recovery drill.** Restore a downloaded encrypted backup into an isolated
+3. **Full recovery drill.** Restore a downloaded encrypted backup into an isolated
    scratch checkout and verify stored scores and dashboard reads without using
    the live Discord token or overwriting the active database.
+4. **Clearer rejected-submission feedback.** Improve the existing feedback for
+   duplicates, wrong puzzle dates, unsupported Share text, and submissions after
+   cutoff. Keep replies limited to rejected submissions so normal play stays quiet.
 
 ## Already implemented in source
 
@@ -60,9 +57,13 @@ The services and backup timer are active; see [SYSTEMD.md](SYSTEMD.md).
 - Compact daily Discord embeds with a linked results thread, per-game winner
   highlights, and weekly/monthly combined and per-game leaderboards.
 - Per-player finalized history in Discord with `!stats` / `/stats`.
+- Private `/myday` checklist for accepted/missing games, provisional points,
+  cutoff, and streaks, without a channel message.
 - Individual game views: `!lb sizeitup`, `!lb timeguessr`, `!lb metazooa`.
 - Date filters and a slash-command game selector.
 - Persistent scores, configuration, and frozen final boards in SQLite.
+- Private operations signals for Gateway connection, scheduler, final posting,
+  and verified local/offsite backups.
 - Separate public per-server leaderboards and a global crossover board, with
   earliest accepted submission per player/game/date and globally recalculated
   points. Browser toggle and Discord leaderboard links are implemented; see
