@@ -117,15 +117,16 @@ The bot's `daily_tick` runs every 30 seconds. For a midnight cutoff in
 1. In thread mode, at the **00:00** cutoff, create and pin today's parent prompt and
    its public results thread. The previous bot-owned daily pin is removed. Early
    parent-channel messages posted while the bot was offline are still recovered.
-2. At or after **00:05**, recover missed results, freeze yesterday's board, and post
-   one compact final embed in the configured board channel. A public thread attached
-   to it contains highlights, full results, and a weekly summary in channel mode.
-   In thread mode, those details go into yesterday's results thread. Thread failures
-   retry separately and do not change the frozen board.
-3. At or after **08:05**, check TimeGuessr's current daily puzzle. If the expected
-   puzzle is still unavailable, retry until noon. Then post the compact links/status
-   embed in the board channel for channel mode, or edit today's pinned prompt in
-   thread mode. Other games can be submitted before this update.
+2. At or after **00:05**, recover missed results and freeze yesterday's board. Standard
+   style posts the compact final embed in the configured board channel. Compact thread
+   style posts it in yesterday's results thread. Highlights, full results, and a weekly
+   summary follow in the detail thread; failures retry without changing the frozen board.
+3. At or after **08:05**, compact thread style edits today's pinned parent with the
+   current month's finalized top three, yesterday's winner, and a thread invitation.
+   This happens even if TimeGuessr has not reset. Game links and status go into today's
+   thread once its puzzle is ready, or by noon with a warning. Standard thread style
+   edits its pinned parent with links; channel mode posts a links/status embed.
+   Other games can be submitted before this update.
 4. `/status` reads TimeGuessr's live next-reset timer for its response. The timer and
    current puzzle number come from TimeGuessr over HTTPS. If its page cannot be read,
    the bot uses a general reset warning and still sends the links post.
@@ -133,7 +134,9 @@ The bot's `daily_tick` runs every 30 seconds. For a midnight cutoff in
 For other guild cutoffs, the final board is due five minutes after their configured
 cutoff. Channel-mode links post no earlier than 08:05 in that guild's timezone and
 no earlier than its previous final board. Thread-mode prompts open at cutoff and
-receive the links edit at or after 08:05. `result_modes`, `boards`, `board_details`,
+receive the morning update at or after 08:05. Each guild stores `language` (`en` or
+`de`) and `announcement_style` (`standard` or `compact`) in `servers`; `!language`
+and `!announcement_style` change only that guild. `result_modes`, `boards`, `board_details`,
 and `daily_prompts` store mode history, delivery state, cursors, attempted times,
 pins, and Discord message IDs. If a send times out after
 Discord accepted it, the bot searches channel or thread history for its unique embed
@@ -147,6 +150,7 @@ every network failure. Old days do not receive backfilled game-links posts.
 | --- | --- |
 | `__main__.py` | Loads `.env`, opens SQLite, holds the single-writer file lock, starts the Discord bot |
 | `bot.py` | Gateway events, prefix/slash commands, result reactions, scheduled board/thread/links posts, Discord API calls |
+| `i18n.py` | English/German Discord text helpers and parser-feedback translations |
 | `parsers.py`, `models.py` | Share-text parsing and typed game, submission, and guild settings data |
 | `calendar.py`, `service.py` | Puzzle-date mapping, cutoffs, acceptance rules, and result rejection messages |
 | `storage.py` | SQLite schema and writes for settings, submissions, frozen boards, delivery state, overrides, and audit entries |

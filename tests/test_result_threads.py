@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 import pytest
 
-from daily_games.bot import CompetitionCommands, DailyGamesBot
+from daily_games.bot import CompetitionCommands, DailyGamesBot, compact_announcement_embed
 from daily_games.calendar import active_day
 from daily_games.presentation import make_snapshot
 
@@ -143,6 +143,20 @@ async def test_result_mode_command_schedules_next_day(thread_server, store, conf
     assert "from" in ctx.send.await_args.args[0]
 
 
+async def test_admin_can_set_german_and_compact_style(thread_server, store, config):
+    cog = CompetitionCommands(thread_server.bot)
+    ctx = SimpleNamespace(
+        guild=thread_server.guild,
+        author=SimpleNamespace(id=1),
+        send=AsyncMock(),
+    )
+    await cog.language.callback(cog, ctx, "de")
+    assert store.config(config.guild_id).language == "de"
+    await cog.announcement_style.callback(cog, ctx, "compact")
+    assert store.config(config.guild_id).announcement_style == "compact"
+    assert "Kompakte Posts" in ctx.send.await_args.args[0]
+
+
 async def test_initial_setup_can_start_in_thread_mode(thread_server, store):
     cog = CompetitionCommands(thread_server.bot)
     guild = SimpleNamespace(id=101, me=SimpleNamespace(id=123))
@@ -196,6 +210,140 @@ async def test_thread_prompt_is_pinned_once_and_morning_links_edit_it(
     assert store.prompt(config.guild_id, DAY)["morning_updated"] == 1
     assert f"<#{prompt['thread_id']}>" in parent_message.embeds[0].description
     assert parent_message.edit.await_count == 2
+
+
+def test_compact_german_announcement_shows_month_and_yesterday(config):
+    from dataclasses import replace
+
+    cfg = replace(config, language="de", announcement_style="compact")
+    monthly = {
+        "rows": [
+            {"rank": 1, "name": "Anna", "points": 17},
+            {"rank": 2, "name": "Ben", "points": 14},
+            {"rank": 3, "name": "Cara", "points": 10},
+            {"rank": 3, "name": "Dora", "points": 10},
+        ]
+    }
+    yesterday = {"rows": [{"rank": 1, "name": "Anna", "total": 5}]}
+    embed = compact_announcement_embed(cfg, DAY, 900, monthly, yesterday)
+    assert "gehen wieder los" in embed.title
+    assert "Gestern gewonnen" in embed.description
+    assert "Monats-Top-3" in embed.description
+    assert "1. Anna · 17 Pkt." in embed.description
+    assert "+1 gleichauf auf Platz 3" in embed.description
+    assert "<#900>" in embed.description
+
+
+async def test_compact_mode_keeps_final_board_and_morning_links_in_threads(
+    thread_server, store, config, monkeypatch
+):
+    store.set_result_mode(config.guild_id, DAY, "thread", actor_id=1)
+    store.set_presentation(config.guild_id, actor_id=1, language="de", style="compact")
+    cfg = store.config(config.guild_id)
+    midnight = datetime(2026, 11, 13, 0, tzinfo=UTC)
+    await thread_server.bot.publish_thread_prompt_locked(cfg, DAY, midnight)
+    prompt = store.prompt(cfg.guild_id, DAY)
+    thread = thread_server.state.threads[prompt["thread_id"]]
+    monkeypatch.setattr("daily_games.bot.current_daily_puzzle", AsyncMock(return_value=1262))
+    monkeypatch.setattr("daily_games.bot.next_reset", AsyncMock(return_value=None))
+    await thread_server.bot.publish_thread_prompt_locked(
+        cfg, DAY, midnight + timedelta(hours=8, minutes=5)
+    )
+    parent_message = thread_server.state.messages[prompt["message_id"]]
+    assert "Monats-Top-3" in parent_message.embeds[0].description
+    assert "Tagesrätsel spielen" not in parent_message.embeds[0].description
+    assert "Tagesrätsel spielen" in thread.send.await_args.kwargs["embed"].description
+    assert store.prompt(cfg.guild_id, DAY)["header_updated"] == 1
+    assert store.prompt(cfg.guild_id, DAY)["morning_updated"] == 1
+    store.freeze(cfg.guild_id, DAY, cfg.output_channel_id, make_snapshot([], DAY, cfg))
+    await thread_server.bot.publish_locked(cfg, DAY, midnight + timedelta(days=1, minutes=5))
+    assert store.board(cfg.guild_id, DAY)["message_id"] is not None
+    assert thread_server.board.send.await_count == 0
+    assert thread.send.await_count == 2
+
+
+async def test_compact_morning_header_appears_while_timeguessr_is_delayed(
+    thread_server, store, config, monkeypatch
+):
+    store.set_result_mode(config.guild_id, DAY, "thread", actor_id=1)
+    store.set_presentation(config.guild_id, actor_id=1, language="de", style="compact")
+    cfg = store.config(config.guild_id)
+    midnight = datetime(2026, 11, 13, 0, tzinfo=UTC)
+    await thread_server.bot.publish_thread_prompt_locked(cfg, DAY, midnight)
+    monkeypatch.setattr("daily_games.bot.current_daily_puzzle", AsyncMock(return_value=1261))
+    await thread_server.bot.publish_thread_prompt_locked(
+        cfg, DAY, midnight + timedelta(hours=8, minutes=5)
+    )
+    prompt = store.prompt(cfg.guild_id, DAY)
+    assert prompt["header_updated"] == 1
+    assert prompt["morning_updated"] == 0
+    parent = thread_server.state.messages[prompt["message_id"]]
+    assert "Monats-Top-3" in parent.embeds[0].description
+    thread = thread_server.state.threads[prompt["thread_id"]]
+    thread.send.assert_not_awaited()
+    monkeypatch.setattr("daily_games.bot.current_daily_puzzle", AsyncMock(return_value=1262))
+    monkeypatch.setattr("daily_games.bot.next_reset", AsyncMock(return_value=None))
+    await thread_server.bot.publish_thread_prompt_locked(
+        cfg, DAY, midnight + timedelta(hours=8, minutes=10)
+    )
+    assert store.prompt(cfg.guild_id, DAY)["morning_updated"] == 1
+    thread.send.assert_awaited_once()
+
+
+async def test_compact_morning_links_reconcile_after_ambiguous_send(
+    thread_server, store, config, monkeypatch
+):
+    store.set_result_mode(config.guild_id, DAY, "thread", actor_id=1)
+    store.set_presentation(config.guild_id, actor_id=1, style="compact")
+    cfg = store.config(config.guild_id)
+    midnight = datetime(2026, 11, 13, 0, tzinfo=UTC)
+    await thread_server.bot.publish_thread_prompt_locked(cfg, DAY, midnight)
+    monkeypatch.setattr("daily_games.bot.current_daily_puzzle", AsyncMock(return_value=1262))
+    monkeypatch.setattr("daily_games.bot.next_reset", AsyncMock(return_value=None))
+    await thread_server.bot.publish_thread_prompt_locked(
+        cfg, DAY, midnight + timedelta(hours=8, minutes=5)
+    )
+    prompt = store.prompt(cfg.guild_id, DAY)
+    thread = thread_server.state.threads[prompt["thread_id"]]
+    sent_embed = thread.send.await_args.kwargs["embed"]
+    thread_server.state.thread_messages[thread.id].append(
+        SimpleNamespace(
+            id=discord.utils.time_snowflake(midnight + timedelta(hours=8, minutes=5)) + 1,
+            author=SimpleNamespace(id=123),
+            embeds=[sent_embed],
+        )
+    )
+    with store.db:
+        store.db.execute(
+            "UPDATE daily_prompts SET morning_updated=0 WHERE guild_id=? AND day=?",
+            (cfg.guild_id, DAY.isoformat()),
+        )
+    await thread_server.bot.publish_thread_prompt_locked(
+        cfg, DAY, midnight + timedelta(hours=8, minutes=6)
+    )
+    thread.send.assert_awaited_once()
+    assert store.prompt(cfg.guild_id, DAY)["morning_updated"] == 1
+
+
+async def test_style_change_keeps_existing_daily_prompt_layout(
+    thread_server, store, config, monkeypatch
+):
+    store.set_result_mode(config.guild_id, DAY, "thread", actor_id=1)
+    midnight = datetime(2026, 11, 13, 0, tzinfo=UTC)
+    await thread_server.bot.publish_thread_prompt_locked(config, DAY, midnight)
+    store.set_presentation(config.guild_id, actor_id=1, style="compact")
+    cfg = store.config(config.guild_id)
+    assert store.prompt(cfg.guild_id, DAY)["announcement_style"] == "standard"
+    monkeypatch.setattr("daily_games.bot.current_daily_puzzle", AsyncMock(return_value=1262))
+    monkeypatch.setattr("daily_games.bot.next_reset", AsyncMock(return_value=None))
+    await thread_server.bot.publish_thread_prompt_locked(
+        cfg, DAY, midnight + timedelta(hours=8, minutes=5)
+    )
+    prompt = store.prompt(cfg.guild_id, DAY)
+    parent = thread_server.state.messages[prompt["message_id"]]
+    assert "Play today" in parent.embeds[0].title
+    assert "Play daily" in parent.embeds[0].description
+    thread_server.state.threads[prompt["thread_id"]].send.assert_not_awaited()
 
 
 async def test_new_daily_pin_unpins_only_previous_bot_prompt(thread_server, store, config):

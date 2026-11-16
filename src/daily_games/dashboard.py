@@ -177,6 +177,7 @@ def backup_status(settings: DashboardSettings) -> dict:
 
 
 def config_from_row(row: sqlite3.Row) -> ServerConfig:
+    columns = row.keys()
     return ServerConfig(
         row["guild_id"],
         row["input_channel_id"],
@@ -185,6 +186,8 @@ def config_from_row(row: sqlite3.Row) -> ServerConfig:
         row["cutoff"],
         row["scoring"],
         date.fromisoformat(row["started_day"]),
+        row["language"] if "language" in columns else "en",
+        row["announcement_style"] if "announcement_style" in columns else "standard",
     )
 
 
@@ -362,6 +365,8 @@ def read_data(
                 "scoring": cfg.scoring,
                 "result_mode": current_mode,
                 "pending_result_mode": pending_mode,
+                "language": cfg.language,
+                "announcement_style": cfg.announcement_style,
                 "input_channel_id": str(cfg.input_channel_id),
                 "output_channel_id": str(cfg.output_channel_id),
                 "started_day": cfg.started_day.isoformat(),

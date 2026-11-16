@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
@@ -25,12 +26,14 @@ from .discord_views import (
     compact_boards,
     daily_highlights,
     period_embed,
+    player_name,
     player_stats_embed,
     player_stats_snapshot,
     weekly_embed,
     weekly_snapshot,
 )
 from .health import HealthReporter
+from .i18n import command_error, parser_error, phrase, scoring_label
 from .models import GAME_TITLES, GAME_URLS, Game, ServerConfig
 from .parsers import parse_message
 from .periods import period_snapshot, period_start
@@ -44,6 +47,8 @@ from .timeguessr import current_daily_puzzle, next_reset
 log = logging.getLogger(__name__)
 ScoringMode = Literal["players_beaten", "placement"]
 ResultMode = Literal["channel", "thread"]
+Language = Literal["en", "de"]
+AnnouncementStyle = Literal["standard", "compact"]
 NumberedGame = Literal["timeguessr", "sizeitup", "metazooa"]
 GameName = Literal["timeguessr", "sizeitup", "metazooa"]
 
@@ -60,6 +65,10 @@ def prompt_marker(guild_id: int, day: date) -> str:
     return f"daily-games-prompt:{guild_id}:{day.isoformat()}"
 
 
+def links_marker(guild_id: int, day: date) -> str:
+    return f"daily-games-links:{guild_id}:{day.isoformat()}"
+
+
 def status_embed(
     store: Store,
     cfg: ServerConfig,
@@ -69,37 +78,61 @@ def status_embed(
     scheduled: bool = False,
     thread_id: int | None = None,
 ) -> discord.Embed:
+    language = cfg.language
     expected = []
     for game in Game:
         override = store.puzzle_for_day(cfg.guild_id, game, day)
         puzzle = override or str(ANCHORS[game] + (day - ANCHOR_DAY).days)
-        label = "expected " if game in (Game.TIMEGUESSR, Game.SIZE_IT_UP) else ""
+        label = (
+            phrase(language, "expected ", "erwartet ")
+            if game in (Game.TIMEGUESSR, Game.SIZE_IT_UP)
+            else ""
+        )
         identity = f"#{puzzle}" if game == Game.SIZE_IT_UP else puzzle
         if game == Game.SIZE_IT_UP:
             identity += f" ({day.isoformat()})"
         expected.append(
-            f"{GAME_TITLES[game]}: {label}`{identity}` · [Play daily](<{GAME_URLS[game]}>)"
+            f"{GAME_TITLES[game]}: {label}`{identity}` · "
+            f"[{phrase(language, 'Play daily', 'Tagesrätsel spielen')}](<{GAME_URLS[game]}>)"
         )
     deadline = int(closes_at(day, cfg).timestamp())
     if timeguessr_reset:
-        reset_note = (
+        reset_note = phrase(
+            language,
             f"TimeGuessr's [live timer](https://timeguessr.com/finalscoredaily) says its next "
             f"daily starts <t:{int(timeguessr_reset.timestamp())}:f>. "
             "If it still shows the previous puzzle, wait; that puzzle cannot count "
-            "for this competition day."
+            "for this competition day.",
+            "Laut [Live-Timer](https://timeguessr.com/finalscoredaily) beginnt das nächste "
+            f"TimeGuessr-Tagesrätsel <t:{int(timeguessr_reset.timestamp())}:f>. "
+            "Falls noch das alte Rätsel erscheint, warte bitte: Es zählt heute nicht mehr.",
         )
     else:
-        reset_note = (
+        reset_note = phrase(
+            language,
             "TimeGuessr may reset later than this server's cutoff. "
-            "Check its timer and wait for the new puzzle before sharing."
+            "Check its timer and wait for the new puzzle before sharing.",
+            "TimeGuessr setzt möglicherweise später zurück als dieser Server. "
+            "Prüfe den Timer und warte vor dem Teilen auf das neue Rätsel.",
         )
+    heading = (
+        phrase(language, "Play today", "Heute spielen")
+        if scheduled
+        else phrase(language, "Competition", "Wettbewerb")
+    )
+    result_label = phrase(language, "Results", "Ergebnisse")
+    board_label = phrase(language, "Boards", "Ranglisten")
+    deadline_label = phrase(language, "Deadline", "Abgabe bis")
+    board_destination = (
+        thread_id if thread_id and cfg.announcement_style == "compact" else cfg.output_channel_id
+    )
     embed = discord.Embed(
-        title=f"{'Play today' if scheduled else 'Competition'} · {day}",
+        title=f"{heading} · {day}",
         color=MAUVE,
         description=(
-            f"**Results:** <#{thread_id or cfg.input_channel_id}> · "
-            f"**Boards:** <#{cfg.output_channel_id}>\n"
-            f"**Deadline:** <t:{deadline}:f> (<t:{deadline}:R>)\n"
+            f"**{result_label}:** <#{thread_id or cfg.input_channel_id}> · "
+            f"**{board_label}:** <#{board_destination}>\n"
+            f"**{deadline_label}:** <t:{deadline}:f> (<t:{deadline}:R>)\n"
             + "\n".join(expected)
             + f"\n\n{reset_note}"
         ),
@@ -108,7 +141,13 @@ def status_embed(
         text=(
             prompt_marker(cfg.guild_id, day)
             if scheduled
-            else f"{cfg.timezone} · {cfg.cutoff} · {cfg.scoring} · !weekly for weekly stats"
+            else phrase(
+                language,
+                f"{cfg.timezone} · {cfg.cutoff} · {scoring_label(language, cfg.scoring)} · "
+                "!weekly for weekly stats",
+                f"{cfg.timezone} · {cfg.cutoff} · {scoring_label(language, cfg.scoring)} · "
+                "!weekly für die Wochenwertung",
+            )
         )
     )
     return embed
@@ -117,14 +156,94 @@ def status_embed(
 def thread_prompt_embed(
     cfg: ServerConfig, day: date, thread_id: int | None = None
 ) -> discord.Embed:
-    destination = f"<#{thread_id}>" if thread_id else "the thread below this post"
-    embed = discord.Embed(
-        title=f"Play today · {day}",
-        color=MAUVE,
-        description=(
+    destination = (
+        f"<#{thread_id}>"
+        if thread_id
+        else phrase(cfg.language, "the thread below this post", "den Thread unter diesem Beitrag")
+    )
+    if cfg.announcement_style == "compact":
+        description = phrase(
+            cfg.language,
+            f"Post today's Share results in {destination}. "
+            "Today's final standings and game links appear in this thread. "
+            "The monthly top three will be added here in the morning.",
+            f"Poste deine heutigen Spielergebnisse in {destination}. "
+            "Der heutige Endstand und die Spiellinks stehen in diesem Thread. "
+            "Die Monats-Top-3 folgen heute Morgen hier.",
+        )
+    else:
+        description = phrase(
+            cfg.language,
             f"Post today's Share results in {destination}. "
             f"The final board appears in <#{cfg.output_channel_id}> after cutoff.\n"
-            "Game links and puzzle status will be added here in the morning."
+            "Game links and puzzle status will be added here in the morning.",
+            f"Poste deine heutigen Spielergebnisse in {destination}. "
+            f"Die Tageswertung erscheint nach dem Stichtag in <#{cfg.output_channel_id}>.\n"
+            "Spiellinks und Rätselstatus folgen heute Morgen hier.",
+        )
+    embed = discord.Embed(
+        title=f"{phrase(cfg.language, 'Play today', 'Heute spielen')} · {day}",
+        color=MAUVE,
+        description=description,
+    )
+    embed.set_footer(text=prompt_marker(cfg.guild_id, day))
+    return embed
+
+
+def compact_announcement_embed(
+    cfg: ServerConfig, day: date, thread_id: int, monthly: dict, yesterday: dict | None
+) -> discord.Embed:
+    """One short, editable parent post; detailed results stay in its thread."""
+    language = cfg.language
+    winners = (
+        [row for row in yesterday["rows"] if row["rank"] == 1 and row["total"] > 0]
+        if yesterday
+        else []
+    )
+    winner_names = ", ".join(player_name(row["name"]) for row in winners[:3])
+    if len(winners) > 3:
+        winner_names += f" +{len(winners) - 3}"
+    winner_line = phrase(
+        language,
+        f"**Yesterday's winner:** {winner_names}" if winners else "**Yesterday:** No winner yet",
+        f"**Gestern gewonnen:** {winner_names}" if winners else "**Gestern:** noch kein Sieger",
+    )
+    leaders = monthly["rows"][:3]
+    monthly_lines = [
+        f"{row['rank']}. {player_name(row['name'])} · {row['points']} "
+        f"{phrase(language, 'pts', 'Pkt.')}"
+        for row in leaders
+    ]
+    if leaders:
+        hidden_ties = sum(
+            row["rank"] == leaders[-1]["rank"] for row in monthly["rows"][len(leaders) :]
+        )
+        if hidden_ties:
+            monthly_lines.append(
+                phrase(
+                    language,
+                    f"+{hidden_ties} tied at rank {leaders[-1]['rank']}",
+                    f"+{hidden_ties} gleichauf auf Platz {leaders[-1]['rank']}",
+                )
+            )
+    if not monthly_lines:
+        monthly_lines = [
+            phrase(language, "No finalized days yet.", "Noch keine abgeschlossenen Spieltage.")
+        ]
+    heading = phrase(language, "Daily Games are back", "Die Daily Games gehen wieder los")
+    embed = discord.Embed(
+        title=f"{heading} · {day}",
+        color=MAUVE,
+        description=(
+            f"{winner_line}\n"
+            f"**{phrase(language, 'Monthly top 3', 'Monats-Top-3')}:**\n"
+            + "\n".join(monthly_lines)
+            + "\n\n"
+            + phrase(
+                language,
+                f"Want to join? Open <#{thread_id}> for the games and post your results there.",
+                f"Du willst mitmachen? Schau in <#{thread_id}> und poste dort deine Ergebnisse.",
+            )
         ),
     )
     embed.set_footer(text=prompt_marker(cfg.guild_id, day))
@@ -132,11 +251,21 @@ def thread_prompt_embed(
 
 
 def board_embeds(
-    snapshot: dict, guild_id: int, *, final: bool, scheduled: bool = False, game: Game | None = None
+    snapshot: dict,
+    guild_id: int,
+    *,
+    final: bool,
+    scheduled: bool = False,
+    game: Game | None = None,
+    language: str = "en",
 ) -> list[discord.Embed]:
     """Page embeds to respect Discord limits without silently truncating players."""
     day = date.fromisoformat(snapshot["day"])
-    heading = "Final standings" if final else "Current standings · provisional"
+    heading = (
+        phrase(language, "Final standings", "Endstand")
+        if final
+        else phrase(language, "Current standings · provisional", "Aktueller Stand · vorläufig")
+    )
     title = "Daily Games"
     games = [(Game.TIMEGUESSR, "TG"), (Game.SIZE_IT_UP, "Size"), (Game.METAZOOA, "Zoo")]
     if game is not None:
@@ -147,11 +276,19 @@ def board_embeds(
     for row in snapshot["rows"]:
         name = discord.utils.escape_markdown(discord.utils.escape_mentions(row["name"]))[:80]
         scores = " · ".join(
-            f"{label}: {score_label(game, row['games'].get(game.value))}" for game, label in games
+            f"{label}: {score_label(game, row['games'].get(game.value), language)}"
+            for game, label in games
         )
-        lines.append(f"**{row['rank']}. {name} — {row['total']} pts**\n{scores}")
+        points_unit = phrase(language, "pts", "Pkt.")
+        lines.append(f"**{row['rank']}. {name} — {row['total']} {points_unit}**\n{scores}")
     pages, page = [], ""
-    for line in lines or ["No results for this competition day."]:
+    for line in lines or [
+        phrase(
+            language,
+            "No results for this competition day.",
+            "Keine Ergebnisse für diesen Spieltag.",
+        )
+    ]:
         if len(page) + len(line) + 2 > 3500:
             pages.append(page)
             page = ""
@@ -164,18 +301,27 @@ def board_embeds(
             description=description,
             color=discord.Color.gold() if final else discord.Color.teal(),
         )
-        mode = "1 + players beaten" if snapshot["scoring"] == "players_beaten" else "placement"
+        mode = scoring_label(language, snapshot["scoring"])
+        cutoff_label = phrase(language, "cutoff", "Stichtag")
         embed.add_field(
-            name="Competition rules",
+            name=phrase(language, "Competition rules", "Wettbewerbsregeln"),
             value=(
-                f"{snapshot['timezone']} · cutoff {snapshot['cutoff']} · {mode}\n"
+                f"{snapshot['timezone']} · {cutoff_label} {snapshot['cutoff']} · {mode}\n"
                 "TG = TimeGuessr · Size = Size It Up · Zoo = Metazooa\n"
-                "Missing: — · Failed: 0 points · Ties share rank"
+                + phrase(
+                    language,
+                    "Missing: — · Failed: 0 points · Ties share rank",
+                    "Fehlt: — · Fehlversuch: 0 Punkte · Gleichstände teilen den Rang",
+                )
             ),
             inline=False,
         )
         marker = (
-            board_marker(guild_id, day) if scheduled else "Final view" if final else "Live view"
+            board_marker(guild_id, day)
+            if scheduled
+            else phrase(language, "Final view", "Endstand")
+            if final
+            else phrase(language, "Live view", "Live-Ansicht")
         )
         embed.set_footer(text=f"{marker} · page {index}/{len(pages)}")
         embeds.append(embed)
@@ -320,6 +466,7 @@ class DailyGamesBot(commands.Bot):
         if message.author.bot or message.webhook_id:
             return
         parsed, errors = parse_message(message.content)
+        errors = [parser_error(cfg.language, error) for error in errors]
         if not parsed and not errors:
             return
         source_day = active_day(message.created_at, cfg)
@@ -335,7 +482,12 @@ class DailyGamesBot(commands.Bot):
                         await self.suppress_result_preview(message, cfg)
                         try:
                             await message.reply(
-                                f"Post today's Share results in <#{prompt['thread_id']}>.",
+                                phrase(
+                                    cfg.language,
+                                    f"Post today's Share results in <#{prompt['thread_id']}>.",
+                                    "Poste deine heutigen Spielergebnisse in "
+                                    f"<#{prompt['thread_id']}>.",
+                                ),
                                 mention_author=False,
                                 allowed_mentions=discord.AllowedMentions.none(),
                             )
@@ -357,8 +509,13 @@ class DailyGamesBot(commands.Bot):
                     )
                     try:
                         await message.reply(
-                            f"This thread is for {prompt['day']}. "
-                            f"Post today's results in {destination}.",
+                            phrase(
+                                cfg.language,
+                                f"This thread is for {prompt['day']}. "
+                                f"Post today's results in {destination}.",
+                                f"Dieser Thread gehört zum {prompt['day']}. "
+                                f"Poste heutige Ergebnisse in {destination}.",
+                            ),
                             mention_author=False,
                             allowed_mentions=discord.AllowedMentions.none(),
                         )
@@ -370,7 +527,12 @@ class DailyGamesBot(commands.Bot):
             # original submission or establish whether its score changed after cutoff.
             if feedback:
                 await message.reply(
-                    "Edited results are not imported. Paste a fresh Share result instead.",
+                    phrase(
+                        cfg.language,
+                        "Edited results are not imported. Paste a fresh Share result instead.",
+                        "Bearbeitete Ergebnisse werden nicht importiert. "
+                        "Poste einen neuen Teilen-Text.",
+                    ),
                     mention_author=False,
                 )
             return
@@ -386,6 +548,7 @@ class DailyGamesBot(commands.Bot):
                 channel_id=message.channel.id,
                 submitted_at=message.created_at,
                 allowed_channel_id=message.channel.id,
+                language=cfg.language,
             )
             label = GAME_TITLES[result.game]
             if outcome.status == "accepted":
@@ -467,7 +630,12 @@ class DailyGamesBot(commands.Bot):
                     self.needs_recovery.add(cfg.guild_id)
                     log.exception("Submission processing failed for server %s", cfg.guild_id)
                     await message.reply(
-                        "Could not save this result. Please try again shortly.",
+                        phrase(
+                            cfg.language,
+                            "Could not save this result. Please try again shortly.",
+                            "Ergebnis konnte nicht gespeichert werden. "
+                            "Versuche es gleich noch einmal.",
+                        ),
                         mention_author=False,
                     )
         await self.process_commands(message)
@@ -520,12 +688,40 @@ class DailyGamesBot(commands.Bot):
             if details:
                 await self.publish_details_safely(cfg, day, now)
             return
-        channel = self.get_channel(board["output_channel_id"])
-        if not isinstance(channel, discord.TextChannel) or channel.guild.id != cfg.guild_id:
-            raise ValueError("Daily board channel is unavailable.")
+        prompt = self.store.prompt(cfg.guild_id, day)
+        compact_thread = (
+            prompt is not None
+            and prompt["announcement_style"] == "compact"
+            and self.store.mode_for_day(cfg.guild_id, day) == "thread"
+        )
+        if compact_thread and prompt is not None and prompt["thread_id"] is not None:
+            channel = self.get_channel(prompt["thread_id"])
+            if channel is None:
+                channel = await self.fetch_channel(prompt["thread_id"])
+            if (
+                not isinstance(channel, discord.Thread)
+                or channel.guild.id != cfg.guild_id
+                or channel.parent_id != prompt["output_channel_id"]
+            ):
+                raise ValueError("Daily results thread is unavailable for the final board.")
+            if channel.archived:
+                await channel.edit(archived=False)
+        else:
+            channel = self.get_channel(board["output_channel_id"])
+            if not isinstance(channel, discord.TextChannel) or channel.guild.id != cfg.guild_id:
+                raise ValueError("Daily board channel is unavailable.")
+            if compact_thread:
+                log.warning(
+                    "Daily results thread missing; final board falls back to board channel: "
+                    "server=%s day=%s",
+                    cfg.guild_id,
+                    day,
+                )
         snapshot = json.loads(board["snapshot"])
         if details is None and board["attempted_at"] is None:
-            summary = compact_boards(snapshot, final=True, scheduled=True, limit=10)[0]
+            summary = compact_boards(
+                snapshot, final=True, scheduled=True, limit=10, language=cfg.language
+            )[0]
             database = self.store.db.execute("PRAGMA database_list").fetchone()[2]
             guild = self.get_guild(cfg.guild_id)
             links = (
@@ -541,13 +737,27 @@ class DailyGamesBot(commands.Bot):
             )
             if links:
                 summary.description = summary.description.replace(
-                    "full standings: `!lb`", "full standings in the browser"
+                    phrase(
+                        cfg.language,
+                        "full standings: `!lb`",
+                        "vollständige Rangliste: `!lb`",
+                    ),
+                    phrase(
+                        cfg.language,
+                        "full standings in the browser",
+                        "vollständige Rangliste im Browser",
+                    ),
                 )
+                server_label = phrase(cfg.language, "This server", "Dieser Server")
+                global_label = phrase(cfg.language, "Global leaderboard", "Globale Rangliste")
                 summary.add_field(
-                    name="Full leaderboard in your browser",
+                    name=phrase(
+                        cfg.language,
+                        "Full leaderboard in your browser",
+                        "Vollständige Rangliste im Browser",
+                    ),
                     value=(
-                        f"[This server]({links['server']}) · "
-                        f"[Global leaderboard]({links['global']})"
+                        f"[{server_label}]({links['server']}) · [{global_label}]({links['global']})"
                     ),
                     inline=False,
                 )
@@ -559,13 +769,14 @@ class DailyGamesBot(commands.Bot):
             )
             extra_embeds = (
                 [
-                    daily_highlights(snapshot),
+                    daily_highlights(snapshot, cfg.language),
                     *board_embeds(
                         snapshot,
                         cfg.guild_id,
                         final=True,
+                        language=cfg.language,
                     ),
-                    weekly_embed(weekly),
+                    weekly_embed(weekly, cfg.language),
                 ]
                 if snapshot["rows"]
                 else []
@@ -577,7 +788,11 @@ class DailyGamesBot(commands.Bot):
                 embed.set_footer(
                     text=(
                         f"Daily Podium · {day} · Details {index}/{len(extra_embeds)}"
-                        + (f" · {prior_footer}" if embed.title.startswith("This week") else "")
+                        + (
+                            f" · {prior_footer}"
+                            if embed.title.startswith(("This week", "Diese Woche"))
+                            else ""
+                        )
                     )
                 )
             self.store.plan_details(
@@ -593,7 +808,11 @@ class DailyGamesBot(commands.Bot):
         embeds = (
             [discord.Embed.from_dict(json.loads(details["payload"])["summary"])]
             if details
-            else (board_embeds(snapshot, cfg.guild_id, final=True, scheduled=True))
+            else (
+                board_embeds(
+                    snapshot, cfg.guild_id, final=True, scheduled=True, language=cfg.language
+                )
+            )
         )
         marker = board_marker(cfg.guild_id, day)
         # If a send timed out or we crashed after Discord accepted it, find the existing post.
@@ -704,8 +923,10 @@ class DailyGamesBot(commands.Bot):
         """Create the day's pinned entry point, then enrich it at the morning hour."""
         if day != active_day(now, cfg) or self.store.mode_for_day(cfg.guild_id, day) != "thread":
             return
-        self.store.plan_prompt(cfg.guild_id, day, cfg.input_channel_id)
+        self.store.plan_prompt(cfg.guild_id, day, cfg.input_channel_id, cfg.announcement_style)
         prompt = self.store.prompt(cfg.guild_id, day)
+        style = prompt["announcement_style"]
+        presentation_cfg = replace(cfg, announcement_style=style)
         channel = self.get_channel(prompt["output_channel_id"])
         if not isinstance(channel, discord.TextChannel) or channel.guild.id != cfg.guild_id:
             raise ValueError("Daily results parent channel is unavailable.")
@@ -726,7 +947,7 @@ class DailyGamesBot(commands.Bot):
                 if not prompt["attempted_at"]:
                     self.store.mark_prompt_attempt(cfg.guild_id, day, now)
                 found = await channel.send(
-                    embed=thread_prompt_embed(cfg, day),
+                    embed=thread_prompt_embed(presentation_cfg, day),
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
             self.store.mark_prompt_posted(cfg.guild_id, day, found.id)
@@ -737,7 +958,11 @@ class DailyGamesBot(commands.Bot):
                 thread = await self.fetch_channel(prompt["thread_id"] or prompt["message_id"])
             except discord.NotFound:
                 thread = await channel.create_thread(
-                    name=f"Daily Games · {day} · results",
+                    name=phrase(
+                        cfg.language,
+                        f"Daily Games · {day} · results",
+                        f"Daily Games · {day} · Ergebnisse",
+                    ),
                     message=discord.Object(id=prompt["message_id"]),
                     auto_archive_duration=1440,
                     reason="Daily game results",
@@ -756,17 +981,16 @@ class DailyGamesBot(commands.Bot):
             self.store.mark_prompt_thread(cfg.guild_id, day, thread.id)
             prompt = self.store.prompt(cfg.guild_id, day)
         parent_message = None
+        morning_due = now >= boundary(day, cfg.timezone, "08:05").astimezone(UTC)
         if (
             not prompt["linked"]
             or not prompt["pinned"]
-            or (
-                not prompt["morning_updated"]
-                and now >= boundary(day, cfg.timezone, "08:05").astimezone(UTC)
-            )
+            or (style == "compact" and not prompt["header_updated"] and morning_due)
+            or (style != "compact" and not prompt["morning_updated"] and morning_due)
         ):
             parent_message = await channel.fetch_message(prompt["message_id"])
         if not prompt["linked"]:
-            await parent_message.edit(embed=thread_prompt_embed(cfg, day, thread.id))
+            await parent_message.edit(embed=thread_prompt_embed(presentation_cfg, day, thread.id))
             self.store.mark_prompt_flag(cfg.guild_id, day, "linked")
         if not prompt["pinned"]:
             try:
@@ -777,7 +1001,29 @@ class DailyGamesBot(commands.Bot):
                 log.warning("Could not pin daily results prompt in server %s", cfg.guild_id)
         if self.store.prompt(cfg.guild_id, day)["pinned"]:
             await self.unpin_previous_prompts_locked(cfg.guild_id, day)
-        if prompt["morning_updated"] or now < boundary(day, cfg.timezone, "08:05").astimezone(UTC):
+        if not morning_due:
+            return
+        if style == "compact" and not prompt["header_updated"]:
+            yesterday = self.store.board(cfg.guild_id, day - timedelta(days=1))
+            monthly = period_snapshot(
+                self.store.finalized_snapshots(
+                    cfg.guild_id, day.replace(day=1), day - timedelta(days=1)
+                ),
+                day,
+                cfg.started_day,
+                "month",
+            )
+            await parent_message.edit(
+                embed=compact_announcement_embed(
+                    cfg,
+                    day,
+                    thread.id,
+                    monthly,
+                    json.loads(yesterday["snapshot"]) if yesterday else None,
+                )
+            )
+            self.store.mark_prompt_flag(cfg.guild_id, day, "header_updated")
+        if prompt["morning_updated"]:
             return
         expected_puzzle = int(
             self.store.puzzle_for_day(cfg.guild_id, Game.TIMEGUESSR, day)
@@ -791,9 +1037,33 @@ class DailyGamesBot(commands.Bot):
         ):
             return
         embed = status_embed(
-            self.store, cfg, day, await next_reset(now), scheduled=True, thread_id=thread.id
+            self.store,
+            presentation_cfg,
+            day,
+            await next_reset(now),
+            scheduled=True,
+            thread_id=thread.id,
         )
-        await parent_message.edit(embed=embed)
+        if style == "compact":
+            embed.set_footer(text=links_marker(cfg.guild_id, day))
+            # The parent stays short. Reconcile an ambiguous thread send by footer.
+            found = False
+            async for message in thread.history(
+                limit=None,
+                after=boundary(day, cfg.timezone, "08:05").astimezone(UTC) - timedelta(minutes=5),
+                oldest_first=True,
+            ):
+                if message.author.id == self.user.id and any(
+                    item.footer.text == links_marker(cfg.guild_id, day) for item in message.embeds
+                ):
+                    found = True
+                    break
+            if not found:
+                await thread.send(
+                    embed=embed, allowed_mentions=discord.AllowedMentions.none(), silent=True
+                )
+        else:
+            await parent_message.edit(embed=embed)
         self.store.mark_prompt_flag(cfg.guild_id, day, "morning_updated")
 
     async def unpin_previous_prompts_locked(self, guild_id: int, day: date):
@@ -871,7 +1141,11 @@ class DailyGamesBot(commands.Bot):
                 if use_results_thread:
                     raise ValueError("Daily results thread was deleted.") from None
                 thread = await channel.create_thread(
-                    name=f"Daily Podium · {day} · results & weekly stats",
+                    name=phrase(
+                        cfg.language,
+                        f"Daily Podium · {day} · results & weekly stats",
+                        f"Daily Podium · {day} · Ergebnisse & Wochenstats",
+                    ),
                     message=discord.Object(id=board["message_id"]),
                     auto_archive_duration=1440,
                     reason="Daily standings details",
@@ -908,6 +1182,8 @@ class DailyGamesBot(commands.Bot):
             return
         while isinstance(error, (commands.HybridCommandError, commands.CommandInvokeError)):
             error = error.original
+        cfg = self.store.config(ctx.guild.id) if ctx.guild else None
+        language = cfg.language if cfg else "en"
         if isinstance(
             error,
             (
@@ -917,18 +1193,43 @@ class DailyGamesBot(commands.Bot):
                 ValueError,
             ),
         ):
-            await ctx.send(f"{error}\nUse `/help` or `!help` for command usage.", ephemeral=True)
+            await ctx.send(
+                f"{command_error(language, str(error))}\n"
+                + phrase(
+                    language,
+                    "Use `/help` or `!help` for command usage.",
+                    "Mit `/help` oder `!help` findest du die Befehle.",
+                ),
+                ephemeral=True,
+            )
         else:
             log.error("Command failed: %s", ctx.command, exc_info=error)
-            await ctx.send("The command failed. Check the bot logs and try again.", ephemeral=True)
+            await ctx.send(
+                phrase(
+                    language,
+                    "The command failed. Check the bot logs and try again.",
+                    "Der Befehl ist fehlgeschlagen. Prüfe die Bot-Logs und versuche es erneut.",
+                ),
+                ephemeral=True,
+            )
 
     async def on_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ):
-        message = "You cannot use that command here, or an argument was invalid."
+        cfg = self.store.config(interaction.guild_id) if interaction.guild_id else None
+        language = cfg.language if cfg else "en"
+        message = phrase(
+            language,
+            "You cannot use that command here, or an argument was invalid.",
+            "Du kannst diesen Befehl hier nicht verwenden oder ein Argument ist ungültig.",
+        )
         if not isinstance(error, app_commands.CheckFailure):
             log.error("Slash command failed", exc_info=error)
-            message = "The command failed. Check the bot logs and try again."
+            message = phrase(
+                language,
+                "The command failed. Check the bot logs and try again.",
+                "Der Befehl ist fehlgeschlagen. Prüfe die Bot-Logs und versuche es erneut.",
+            )
         if interaction.response.is_done():
             await interaction.followup.send(message, ephemeral=True)
         else:
@@ -945,8 +1246,14 @@ class CompetitionCommands(commands.Cog):
             raise commands.BadArgument("An admin must run /setup or !setup first.")
         return cfg
 
+    def language_for(self, ctx: commands.Context) -> str:
+        cfg = self.bot.store.config(ctx.guild.id) if ctx and ctx.guild else None
+        return cfg.language if cfg else "en"
+
     @staticmethod
-    def check_thread_permissions(channel: discord.TextChannel, member: discord.Member):
+    def check_thread_permissions(
+        channel: discord.TextChannel, member: discord.Member, language: str = "en"
+    ):
         permissions = channel.permissions_for(member)
         required = (
             "view_channel",
@@ -962,19 +1269,32 @@ class CompetitionCommands(commands.Cog):
         missing = [name for name in required if not getattr(permissions, name)]
         if missing:
             raise commands.BadArgument(
-                f"Missing thread-mode permissions in {channel.mention}: {', '.join(missing)}"
+                phrase(
+                    language,
+                    f"Missing thread-mode permissions in {channel.mention}: {', '.join(missing)}",
+                    f"Für den Thread-Modus fehlen in {channel.mention} Berechtigungen: "
+                    f"{', '.join(missing)}",
+                )
             )
 
     @commands.hybrid_command(name="ping", description="Check whether the bot is online.")
     async def ping(self, ctx: commands.Context):
-        await ctx.send("Pong! Daily Games is online.")
+        await ctx.send(
+            phrase(
+                self.language_for(ctx),
+                "Pong! Daily Games is online.",
+                "Pong! Daily Games ist online.",
+            )
+        )
 
     @commands.hybrid_command(name="help", description="Show Daily Games commands and scoring.")
     async def help_command(self, ctx: commands.Context):
+        language = self.language_for(ctx)
         embed = discord.Embed(
-            title="Daily Podium · quick guide",
+            title=phrase(language, "Daily Podium · quick guide", "Daily Podium · Kurzanleitung"),
             color=MAUVE,
-            description=(
+            description=phrase(
+                language,
                 "Play a game and paste its **Share** result in the results channel.\n"
                 "In thread mode, paste it in today's pinned results thread.\n"
                 "`!lb` · standings and browser links\n"
@@ -986,27 +1306,54 @@ class CompetitionCommands(commands.Cog):
                 "`/myday` · your accepted games and streaks, privately\n"
                 "`!games` · play links · `!status` · puzzles and deadline\n"
                 "`/result_mode` · admin switch between channel and thread mode\n"
-                "`!ping` · connection check"
+                "`!language de|en` · server language (admin)\n"
+                "`!announcement_style compact|standard` · posting style (admin)\n"
+                "`!ping` · connection check",
+                "Spiele ein Tagesrätsel und poste den **Teilen-Text** im Ergebniskanal.\n"
+                "Im Thread-Modus gehört er in den heutigen angepinnten Ergebnisthread.\n"
+                "`!lb` · Rangliste und Browserlinks\n"
+                "`!lb sizeitup` / `timeguessr` / `metazooa` · einzelnes Spiel\n"
+                "`!lb yesterday` / `!lb sizeitup 2026-11-13` · anderer Tag\n"
+                "`!weekly [day] [game]` · Wochenpunkte abgeschlossener Tage\n"
+                "`!monthly [day] [game]` · Monatspunkte abgeschlossener Tage\n"
+                "`!stats [@player]` · persönliche Statistik und Serien\n"
+                "`/myday` · deine heutigen Ergebnisse, privat\n"
+                "`!games` · Spiellinks · `!status` · Rätsel und Frist\n"
+                "`!result_mode` · zwischen Kanal und Thread wechseln (Admin)\n"
+                "`!language de|en` · Sprache einstellen (Admin)\n"
+                "`!announcement_style compact|standard` · Posting-Stil (Admin)\n"
+                "`!ping` · Verbindung prüfen",
             ),
         )
         embed.add_field(
-            name="Competition",
-            value=(
+            name=phrase(language, "Competition", "Wettbewerb"),
+            value=phrase(
+                language,
                 "First accepted result per player/game counts. "
                 "Edits and reposts do not improve it. "
                 "Failures and missing games score zero; ties share rank. "
                 "Accepted single-game posts get ✅ and 🔥 streak reactions: "
                 "1️⃣–9️⃣, 🔟 at 10, 💎 at 25, 🏆 at 50, 💯 at 100. "
                 "Daily results post five minutes after cutoff, with details and weekly stats "
-                "in a thread."
+                "in a thread.",
+                "Pro Spieler und Spiel zählt das erste angenommene Ergebnis. "
+                "Bearbeiten oder erneut posten verbessert es nicht. "
+                "Fehlversuche und fehlende Spiele geben null Punkte; Gleichstände teilen den Rang. "
+                "Angenommene Einzelspiele erhalten ✅ und 🔥 Serien-Reaktionen: "
+                "1️⃣–9️⃣, 🔟 ab 10, 💎 ab 25, 🏆 ab 50, 💯 ab 100. "
+                "Der Tagesstand erscheint fünf Minuten nach der Frist; Details und Wochenstats "
+                "stehen im Thread.",
             ),
             inline=False,
         )
         embed.add_field(
-            name="Admins · Manage Server",
-            value=(
+            name=phrase(language, "Admins · Manage Server", "Admins · Server verwalten"),
+            value=phrase(
+                language,
                 "`!setup #results` · `/puzzle_date` · `/void_result`\n"
-                "All commands also have slash versions; `/leaderboard` has day and game selectors."
+                "Slash commands appear after global sync; `!` commands work in every server.",
+                "`!setup #results` · `!puzzle_date` · `!void_result`\n"
+                "Alle Befehle haben auch Slash-Versionen, wenn sie global synchronisiert sind.",
             ),
             inline=False,
         )
@@ -1014,12 +1361,17 @@ class CompetitionCommands(commands.Cog):
 
     @commands.hybrid_command(name="games", description="Links to the three daily games.")
     async def games(self, ctx: commands.Context):
+        language = self.language_for(ctx)
         await ctx.send(
             embed=discord.Embed(
-                title="Today's games",
+                title=phrase(language, "Today's games", "Heutige Spiele"),
                 color=MAUVE,
                 description=" · ".join(f"[{GAME_TITLES[game]}]({GAME_URLS[game]})" for game in Game)
-                + "\nPlay, then paste your **Share** result in the results channel.",
+                + phrase(
+                    language,
+                    "\nPlay, then paste your **Share** result in the results channel.",
+                    "\nSpiele mit und poste danach deinen **Teilen-Text** im Ergebniskanal.",
+                ),
             )
         )
 
@@ -1032,6 +1384,7 @@ class CompetitionCommands(commands.Cog):
                 "An admin must run `/setup` before results can be recorded here.", ephemeral=True
             )
             return
+        language = cfg.language
         today = active_day(datetime.now(UTC), cfg)
         snapshot = make_snapshot(self.bot.store.results(cfg.guild_id, today), today, cfg)
         player = next(
@@ -1045,26 +1398,37 @@ class CompetitionCommands(commands.Cog):
         overall = streak_lengths(set().union(*game_days.values()), today)
         deadline = int(closes_at(today, cfg).timestamp())
         embed = discord.Embed(
-            title=f"Your games · {today}",
-            description=(
+            title=f"{phrase(language, 'Your games', 'Deine Spiele')} · {today}",
+            description=phrase(
+                language,
                 f"**{len(results)}/3 accepted** · deadline <t:{deadline}:R>\n"
                 f"🔥 Any-game streak: **{overall['current']}** current / "
                 f"**{overall['best']}** best\n"
-                "Points are provisional until the daily board is finalized."
+                "Points are provisional until the daily board is finalized.",
+                f"**{len(results)}/3 angenommen** · Frist <t:{deadline}:R>\n"
+                f"🔥 Spielübergreifende Serie: **{overall['current']}** aktuell / "
+                f"**{overall['best']}** Rekord\n"
+                "Punkte bleiben vorläufig, bis die Tageswertung abgeschlossen ist.",
             ),
             color=MAUVE,
         )
         for game in Game:
             result = results.get(game.value)
             status = (
-                f"✅ Recorded · {score_label(game, result)}"
+                phrase(language, "✅ Recorded", "✅ Gespeichert")
+                + f" · {score_label(game, result, language)}"
                 if result
-                else f"— Missing · [Play daily]({GAME_URLS[game]})"
+                else phrase(language, "— Missing", "— Fehlt")
+                + f" · [{phrase(language, 'Play daily', 'Tagesrätsel spielen')}]({GAME_URLS[game]})"
             )
             streak = streak_lengths(game_days[game], today)
             embed.add_field(
                 name=GAME_TITLES[game],
-                value=(f"{status}\n🔥 {streak['current']} current / {streak['best']} best"),
+                value=phrase(
+                    language,
+                    f"{status}\n🔥 {streak['current']} current / {streak['best']} best",
+                    f"{status}\n🔥 {streak['current']} aktuell / {streak['best']} Rekord",
+                ),
                 inline=False,
             )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -1084,6 +1448,7 @@ class CompetitionCommands(commands.Cog):
         mode: ResultMode | None = None,
     ):
         old = self.bot.store.config(ctx.guild.id)
+        language = old.language if old else "en"
         timezone = validate_timezone(timezone or (old.timezone if old else "Europe/Berlin"))
         cutoff = cutoff or (old.cutoff if old else "00:00")
         parse_cutoff(cutoff)
@@ -1092,7 +1457,13 @@ class CompetitionCommands(commands.Cog):
             old.output_channel_id if old else results_channel.id
         )
         if not isinstance(board_channel, discord.TextChannel):
-            raise commands.BadArgument("Choose an accessible text channel for daily boards.")
+            raise commands.BadArgument(
+                phrase(
+                    language,
+                    "Choose an accessible text channel for daily boards.",
+                    "Wähle einen zugänglichen Textkanal für die Tageswertung.",
+                )
+            )
         now = datetime.now(UTC)
         effective_day = active_day(now, old) if old else None
         selected_mode = mode or (
@@ -1102,7 +1473,13 @@ class CompetitionCommands(commands.Cog):
         )
         for channel in (results_channel, board_channel):
             if channel.guild.id != ctx.guild.id:
-                raise commands.BadArgument("Both channels must belong to this server.")
+                raise commands.BadArgument(
+                    phrase(
+                        language,
+                        "Both channels must belong to this server.",
+                        "Beide Kanäle müssen zu diesem Server gehören.",
+                    )
+                )
             permissions = channel.permissions_for(ctx.guild.me)
             required = ["view_channel", "send_messages", "read_message_history", "embed_links"]
             if channel.id == results_channel.id:
@@ -1110,10 +1487,14 @@ class CompetitionCommands(commands.Cog):
             missing = [name for name in required if not getattr(permissions, name)]
             if missing:
                 raise commands.BadArgument(
-                    f"Missing permissions in {channel.mention}: {', '.join(missing)}"
+                    phrase(
+                        language,
+                        f"Missing permissions in {channel.mention}: {', '.join(missing)}",
+                        f"In {channel.mention} fehlen Berechtigungen: {', '.join(missing)}",
+                    )
                 )
         if selected_mode == "thread":
-            self.check_thread_permissions(results_channel, ctx.guild.me)
+            self.check_thread_permissions(results_channel, ctx.guild.me, language)
         cfg = ServerConfig(
             ctx.guild.id,
             results_channel.id,
@@ -1122,6 +1503,8 @@ class CompetitionCommands(commands.Cog):
             cutoff,
             scoring,
             old.started_day if old else now.date(),
+            language,
+            old.announcement_style if old else "standard",
         )
         if old is None:
             cfg = ServerConfig(
@@ -1132,6 +1515,8 @@ class CompetitionCommands(commands.Cog):
                 cfg.cutoff,
                 cfg.scoring,
                 active_day(now, cfg),
+                cfg.language,
+                cfg.announcement_style,
             )
         mode_start = active_day(now, cfg)
         if old is not None and mode is not None:
@@ -1142,14 +1527,23 @@ class CompetitionCommands(commands.Cog):
                 self.bot.store.set_result_mode(cfg.guild_id, mode_start, mode, ctx.author.id)
             self.bot.needs_recovery.add(cfg.guild_id)
         embed = discord.Embed(
-            title="Competition configured",
+            title=phrase(language, "Competition configured", "Wettbewerb eingerichtet"),
             color=MAUVE,
-            description=(
+            description=phrase(
+                language,
                 f"**Results:** {results_channel.mention} · **Boards:** {board_channel.mention}\n"
                 f"**Cutoff:** {cutoff} ({timezone}) · post five minutes later\n"
-                f"**Scoring:** {scoring} · `!lb` for standings · `!weekly` for weekly stats"
+                f"**Scoring:** {scoring_label(language, scoring)} · `!lb` for standings · "
+                "`!weekly` for weekly stats"
                 f"\n**Results mode:** {selected_mode}"
-                + (f" (from {mode_start})" if old is not None and mode is not None else "")
+                + (f" (from {mode_start})" if old is not None and mode is not None else ""),
+                f"**Ergebnisse:** {results_channel.mention} · "
+                f"**Ranglisten:** {board_channel.mention}\n"
+                f"**Stichtag:** {cutoff} ({timezone}) · Posting fünf Minuten später\n"
+                f"**Wertung:** {scoring_label(language, scoring)} · `!lb` für die Rangliste · "
+                "`!weekly` für die Woche"
+                f"\n**Ergebnismodus:** {selected_mode}"
+                + (f" (ab {mode_start})" if old is not None and mode is not None else ""),
             ),
         )
         permissions = board_channel.permissions_for(ctx.guild.me)
@@ -1157,17 +1551,24 @@ class CompetitionCommands(commands.Cog):
             not permissions.create_public_threads or not permissions.send_messages_in_threads
         ):
             embed.add_field(
-                name="Optional detail threads",
-                value=(
+                name=phrase(language, "Optional detail threads", "Optionale Detail-Threads"),
+                value=phrase(
+                    language,
                     "Allow **Create Public Threads** and **Send Messages in Threads** "
-                    "in the board channel for full results and weekly summaries below daily posts."
+                    "in the board channel for full results and weekly summaries below daily posts.",
+                    "Erlaube **Öffentliche Threads erstellen** und "
+                    "**Nachrichten in Threads senden** "
+                    "im Ranglistenkanal für vollständige Ergebnisse und Wochenstatistiken.",
                 ),
                 inline=False,
             )
         embed.set_footer(
-            text=(
+            text=phrase(
+                language,
                 "Imports today's messages. Timezone, cutoff and scoring lock after "
-                "competition data exists."
+                "competition data exists.",
+                "Heutige Nachrichten werden importiert. Zeitzone, Stichtag und Wertung "
+                "sind nach ersten Ergebnissen gesperrt.",
             )
         )
         await ctx.send(embed=embed, ephemeral=True)
@@ -1182,15 +1583,66 @@ class CompetitionCommands(commands.Cog):
         cfg = self.config(ctx)
         channel = ctx.guild.get_channel(cfg.input_channel_id)
         if not isinstance(channel, discord.TextChannel):
-            raise commands.BadArgument("Configured results channel is unavailable.")
+            raise commands.BadArgument(
+                phrase(
+                    cfg.language,
+                    "Configured results channel is unavailable.",
+                    "Der eingestellte Ergebniskanal ist nicht verfügbar.",
+                )
+            )
         if mode == "thread":
-            self.check_thread_permissions(channel, ctx.guild.me)
+            self.check_thread_permissions(channel, ctx.guild.me, cfg.language)
         day = active_day(datetime.now(UTC), cfg) + timedelta(days=1)
         async with self.bot.guild_locks[cfg.guild_id]:
             self.bot.store.set_result_mode(cfg.guild_id, day, mode, ctx.author.id)
         await ctx.send(
-            f"Results mode will be **{mode}** from {day}. "
-            "Today's submissions stay in their current mode.",
+            phrase(
+                cfg.language,
+                f"Results mode will be **{mode}** from {day}. "
+                "Today's submissions stay in their current mode.",
+                f"Der Ergebnismodus ist ab {day} **{mode}**. "
+                "Heutige Einreichungen bleiben im bisherigen Modus.",
+            ),
+            ephemeral=True,
+        )
+
+    @commands.hybrid_command(
+        name="language", description="Choose English or German for this server."
+    )
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.default_permissions(manage_guild=True)
+    async def language(self, ctx: commands.Context, language: Language):
+        cfg = self.config(ctx)
+        async with self.bot.guild_locks[cfg.guild_id]:
+            self.bot.store.set_presentation(cfg.guild_id, ctx.author.id, language=language)
+        await ctx.send(
+            phrase(
+                language,
+                "This server now uses English bot messages.",
+                "Der Bot schreibt auf diesem Server jetzt auf Deutsch.",
+            ),
+            ephemeral=True,
+        )
+
+    @commands.hybrid_command(
+        name="announcement_style", description="Choose standard or compact daily posting."
+    )
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.default_permissions(manage_guild=True)
+    async def announcement_style(self, ctx: commands.Context, style: AnnouncementStyle):
+        cfg = self.config(ctx)
+        async with self.bot.guild_locks[cfg.guild_id]:
+            self.bot.store.set_presentation(cfg.guild_id, ctx.author.id, style=style)
+        await ctx.send(
+            phrase(
+                cfg.language,
+                f"Daily posting style set to **{style}** for new daily posts. "
+                "Compact posting takes effect in thread mode; existing posts stay where they are.",
+                f"Täglicher Posting-Stil für neue Tagesbeiträge: **{style}**. "
+                "Kompakte Posts gelten im Thread-Modus; bestehende Beiträge bleiben unverändert.",
+            ),
             ephemeral=True,
         )
 
@@ -1216,7 +1668,11 @@ class CompetitionCommands(commands.Cog):
             selected_game = None if game == "all" else Game(game)
         except ValueError as exc:
             raise commands.BadArgument(
-                "Choose all, timeguessr, sizeitup, or metazooa for the game."
+                phrase(
+                    self.language_for(ctx),
+                    "Choose all, timeguessr, sizeitup, or metazooa for the game.",
+                    "Wähle all, timeguessr, sizeitup oder metazooa als Spiel.",
+                )
             ) from exc
         cfg = self.config(ctx)
         selected = requested_day(day, datetime.now(UTC), cfg)
@@ -1232,7 +1688,14 @@ class CompetitionCommands(commands.Cog):
                 )
         final = board is not None
         if not final and selected < active_day(datetime.now(UTC), cfg):
-            await ctx.send("Submissions are closed for that day; its final board is pending.")
+            await ctx.send(
+                phrase(
+                    cfg.language,
+                    "Submissions are closed for that day; its final board is pending.",
+                    "Einreichungen für diesen Tag sind geschlossen; "
+                    "die endgültige Rangliste folgt.",
+                )
+            )
         database = self.bot.store.db.execute("PRAGMA database_list").fetchone()[2]
         links = (
             leaderboard_links(
@@ -1246,12 +1709,24 @@ class CompetitionCommands(commands.Cog):
             else None
         )
         embeds = compact_boards(
-            snapshot, final=final, game=selected_game, limit=10 if links else None
+            snapshot,
+            final=final,
+            game=selected_game,
+            limit=10 if links else None,
+            language=cfg.language,
         )
         if links:
+            server_label = phrase(cfg.language, "This server", "Dieser Server")
+            global_label = phrase(cfg.language, "Global leaderboard", "Globale Rangliste")
             embeds[-1].add_field(
-                name="Full leaderboard in your browser",
-                value=f"[This server]({links['server']}) · [Global leaderboard]({links['global']})",
+                name=phrase(
+                    cfg.language,
+                    "Full leaderboard in your browser",
+                    "Vollständige Rangliste im Browser",
+                ),
+                value=(
+                    f"[{server_label}]({links['server']}) · [{global_label}]({links['global']})"
+                ),
                 inline=False,
             )
         for embed in embeds:
@@ -1289,7 +1764,11 @@ class CompetitionCommands(commands.Cog):
             selected_game = None if game == "all" else Game(game)
         except ValueError as exc:
             raise commands.BadArgument(
-                "Choose all, timeguessr, sizeitup, or metazooa for the game."
+                phrase(
+                    self.language_for(ctx),
+                    "Choose all, timeguessr, sizeitup, or metazooa for the game.",
+                    "Wähle all, timeguessr, sizeitup oder metazooa als Spiel.",
+                )
             ) from exc
         cfg = self.config(ctx)
         selected = requested_day(day, datetime.now(UTC), cfg)
@@ -1302,7 +1781,7 @@ class CompetitionCommands(commands.Cog):
             period,
             selected_game,
         )
-        await ctx.send(embed=period_embed(summary))
+        await ctx.send(embed=period_embed(summary, cfg.language))
 
     @commands.hybrid_command(
         name="stats", description="Personal stats from this server's finalized days."
@@ -1314,7 +1793,7 @@ class CompetitionCommands(commands.Cog):
         target = member or ctx.author
         snapshots = self.bot.store.finalized_snapshots(cfg.guild_id, cfg.started_day, date.max)
         stats = player_stats_snapshot(snapshots, target.id, active_day(datetime.now(UTC), cfg))
-        await ctx.send(embed=player_stats_embed(stats, target.display_name))
+        await ctx.send(embed=player_stats_embed(stats, target.display_name, cfg.language))
 
     @commands.hybrid_command(
         name="status",
@@ -1330,8 +1809,17 @@ class CompetitionCommands(commands.Cog):
             if self.bot.store.mode_for_day(cfg.guild_id, today) == "thread" and prompt
             else None
         )
+        presentation_cfg = (
+            replace(cfg, announcement_style=prompt["announcement_style"])
+            if thread_id and prompt
+            else cfg
+        )
         embed = status_embed(
-            self.bot.store, cfg, today, await next_reset(datetime.now(UTC)), thread_id=thread_id
+            self.bot.store,
+            presentation_cfg,
+            today,
+            await next_reset(datetime.now(UTC)),
+            thread_id=thread_id,
         )
         await ctx.send(embed=embed, ephemeral=True)
 
@@ -1344,18 +1832,43 @@ class CompetitionCommands(commands.Cog):
     ):
         cfg = self.config(ctx)
         if not 1 <= puzzle <= 1000000:
-            raise commands.BadArgument("Puzzle number is outside the supported range.")
+            raise commands.BadArgument(
+                phrase(
+                    cfg.language,
+                    "Puzzle number is outside the supported range.",
+                    "Die Rätselnummer liegt außerhalb des gültigen Bereichs.",
+                )
+            )
         try:
             selected = date.fromisoformat(day)
         except ValueError as exc:
-            raise commands.BadArgument("Use an ISO date such as 2026-11-13.") from exc
+            raise commands.BadArgument(
+                phrase(
+                    cfg.language,
+                    "Use an ISO date such as 2026-11-13.",
+                    "Verwende ein Datum wie 2026-11-13.",
+                )
+            ) from exc
         async with self.bot.guild_locks[cfg.guild_id]:
             if selected < active_day(datetime.now(UTC), cfg):
-                raise commands.BadArgument("Closed competition dates cannot be remapped.")
+                raise commands.BadArgument(
+                    phrase(
+                        cfg.language,
+                        "Closed competition dates cannot be remapped.",
+                        "Abgeschlossene Spieltage können nicht neu zugeordnet werden.",
+                    )
+                )
             self.bot.store.set_override(
                 cfg.guild_id, Game(game), str(puzzle), selected, ctx.author.id
             )
-        await ctx.send(f"For this server: {game} #{puzzle} belongs to {selected}.", ephemeral=True)
+        await ctx.send(
+            phrase(
+                cfg.language,
+                f"For this server: {game} #{puzzle} belongs to {selected}.",
+                f"Auf diesem Server gehört {game} #{puzzle} zum {selected}.",
+            ),
+            ephemeral=True,
+        )
 
     @commands.hybrid_command(name="void_result", description="Void an erroneous current-day entry.")
     @commands.guild_only()
@@ -1367,8 +1880,16 @@ class CompetitionCommands(commands.Cog):
             today = active_day(datetime.now(UTC), cfg)
             changed = self.bot.store.void(cfg.guild_id, user.id, Game(game), today, ctx.author.id)
         await ctx.send(
-            "Result voided with an audit entry. The player may paste a fresh result today."
+            phrase(
+                cfg.language,
+                "Result voided with an audit entry. The player may paste a fresh result today.",
+                "Ergebnis mit Protokolleintrag entfernt. Der Spieler kann heute neu einreichen.",
+            )
             if changed
-            else "No accepted result found for that player/game today.",
+            else phrase(
+                cfg.language,
+                "No accepted result found for that player/game today.",
+                "Für diesen Spieler und dieses Spiel gibt es heute kein angenommenes Ergebnis.",
+            ),
             ephemeral=True,
         )

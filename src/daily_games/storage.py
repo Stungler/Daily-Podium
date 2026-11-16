@@ -27,7 +27,9 @@ class Store:
                 cutoff TEXT NOT NULL,
                 scoring TEXT NOT NULL,
                 started_day TEXT NOT NULL,
-                cursor INTEGER
+                cursor INTEGER,
+                language TEXT NOT NULL DEFAULT 'en',
+                announcement_style TEXT NOT NULL DEFAULT 'standard'
             );
             CREATE TABLE IF NOT EXISTS submissions (
                 id INTEGER PRIMARY KEY,
@@ -77,6 +79,7 @@ class Store:
                 attempted_at TEXT,
                 retry_at TEXT,
                 message_id INTEGER,
+                announcement_style TEXT NOT NULL DEFAULT 'standard',
                 PRIMARY KEY(guild_id, day)
             );
             INSERT OR IGNORE INTO schema_version VALUES (3);
@@ -105,6 +108,13 @@ class Store:
         """)
         # Upgrade installs that created daily_prompts before retry scheduling existed.
         prompt_columns = {row[1] for row in self.db.execute("PRAGMA table_info(daily_prompts)")}
+        server_columns = {row[1] for row in self.db.execute("PRAGMA table_info(servers)")}
+        if "language" not in server_columns:
+            self.db.execute("ALTER TABLE servers ADD COLUMN language TEXT NOT NULL DEFAULT 'en'")
+        if "announcement_style" not in server_columns:
+            self.db.execute(
+                "ALTER TABLE servers ADD COLUMN announcement_style TEXT NOT NULL DEFAULT 'standard'"
+            )
         if "retry_at" not in prompt_columns:
             self.db.execute("ALTER TABLE daily_prompts ADD COLUMN retry_at TEXT")
         for column, definition in (
@@ -112,12 +122,15 @@ class Store:
             ("thread_cursor", "INTEGER"),
             ("linked", "INTEGER NOT NULL DEFAULT 0"),
             ("morning_updated", "INTEGER NOT NULL DEFAULT 0"),
+            ("header_updated", "INTEGER NOT NULL DEFAULT 0"),
+            ("announcement_style", "TEXT NOT NULL DEFAULT 'standard'"),
             ("pinned", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if column not in prompt_columns:
                 self.db.execute(f"ALTER TABLE daily_prompts ADD COLUMN {column} {definition}")
         self.db.execute("INSERT OR IGNORE INTO schema_version VALUES (4)")
         self.db.execute("INSERT OR IGNORE INTO schema_version VALUES (5)")
+        self.db.execute("INSERT OR IGNORE INTO schema_version VALUES (6)")
         self.db.commit()
 
     def close(self):
@@ -133,6 +146,8 @@ class Store:
             row["cutoff"],
             row["scoring"],
             date.fromisoformat(row["started_day"]),
+            row["language"],
+            row["announcement_style"],
         )
 
     def config(self, guild_id: int) -> ServerConfig | None:
@@ -163,15 +178,17 @@ class Store:
                 """
                 INSERT INTO servers (
                     guild_id, input_channel_id, output_channel_id, timezone, cutoff, scoring,
-                    started_day
-                ) VALUES (?,?,?,?,?,?,?)
+                    started_day, language, announcement_style
+                ) VALUES (?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(guild_id) DO UPDATE SET
                     cursor=CASE WHEN input_channel_id!=excluded.input_channel_id
                         THEN NULL ELSE cursor END,
                     input_channel_id=excluded.input_channel_id,
                     output_channel_id=excluded.output_channel_id,
                     timezone=excluded.timezone, cutoff=excluded.cutoff, scoring=excluded.scoring,
-                    started_day=excluded.started_day
+                    started_day=excluded.started_day,
+                    language=excluded.language,
+                    announcement_style=excluded.announcement_style
             """,
                 (
                     config.guild_id,
@@ -181,9 +198,29 @@ class Store:
                     config.cutoff,
                     config.scoring,
                     (old.started_day if old else config.started_day).isoformat(),
+                    config.language,
+                    config.announcement_style,
                 ),
             )
             self._audit(config.guild_id, actor_id, "configure", str(config))
+
+    def set_presentation(self, guild_id: int, actor_id: int, *, language=None, style=None):
+        if language is not None and language not in {"en", "de"}:
+            raise ValueError("Choose en or de.")
+        if style is not None and style not in {"standard", "compact"}:
+            raise ValueError("Choose standard or compact.")
+        if self.config(guild_id) is None:
+            raise ValueError("Configure this server first.")
+        with self.db:
+            if language is not None:
+                self.db.execute(
+                    "UPDATE servers SET language=? WHERE guild_id=?", (language, guild_id)
+                )
+            if style is not None:
+                self.db.execute(
+                    "UPDATE servers SET announcement_style=? WHERE guild_id=?", (style, guild_id)
+                )
+            self._audit(guild_id, actor_id, "presentation", f"language={language} style={style}")
 
     def has_boards(self, guild_id: int) -> bool:
         return (
@@ -306,12 +343,14 @@ class Store:
             (guild_id, day.isoformat()),
         ).fetchone()
 
-    def plan_prompt(self, guild_id: int, day: date, channel_id: int):
+    def plan_prompt(
+        self, guild_id: int, day: date, channel_id: int, announcement_style: str = "standard"
+    ):
         with self.db:
             self.db.execute(
-                "INSERT OR IGNORE INTO daily_prompts(guild_id,day,output_channel_id) "
-                "VALUES (?,?,?)",
-                (guild_id, day.isoformat(), channel_id),
+                "INSERT OR IGNORE INTO daily_prompts"
+                "(guild_id,day,output_channel_id,announcement_style) VALUES (?,?,?,?)",
+                (guild_id, day.isoformat(), channel_id, announcement_style),
             )
 
     def mark_prompt_attempt(self, guild_id: int, day: date, now: datetime):
@@ -343,7 +382,7 @@ class Store:
             )
 
     def mark_prompt_flag(self, guild_id: int, day: date, flag: str, value: bool = True):
-        if flag not in ("linked", "morning_updated", "pinned"):
+        if flag not in ("linked", "morning_updated", "header_updated", "pinned"):
             raise ValueError("Invalid prompt flag.")
         with self.db:
             self.db.execute(

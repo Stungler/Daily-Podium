@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -135,6 +136,14 @@ async def test_ingestion_records_before_reacting(bot, store, config, message_tim
     assert [call.args[0] for call in message.add_reaction.await_args_list] == ["✅", "🔥", "1️⃣"]
     message.edit.assert_awaited_once_with(suppress=True)
     message.reply.assert_not_awaited()
+
+
+async def test_german_server_translates_invalid_share_feedback(bot, config, message_time):
+    german = replace(config, language="de")
+    message = incoming(german, message_time, TIMEGUESSR.replace("18,419", "50,001"))
+    await bot.ingest(message, german, feedback=True)
+    message.add_reaction.assert_awaited_with("⚠️")
+    assert "außerhalb des gültigen Bereichs" in message.reply.await_args.args[0]
 
 
 async def test_numbered_sizeitup_share_is_acknowledged_and_recorded(bot, store, config):

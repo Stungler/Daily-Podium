@@ -328,9 +328,36 @@ def test_additive_schema_preserves_old_scores(tmp_path, config):
         assert upgraded.board(100, DAY)["snapshot"] == before
         assert upgraded.details(100, DAY) is None
         assert upgraded.prompt(100, DAY) is None
-        assert upgraded.db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 5
+        assert upgraded.db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 6
     finally:
         upgraded.close()
+
+
+def test_legacy_server_settings_default_to_english_and_standard(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "legacy-server.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "CREATE TABLE servers (guild_id INTEGER PRIMARY KEY, "
+            "input_channel_id INTEGER NOT NULL, "
+            "output_channel_id INTEGER NOT NULL, timezone TEXT NOT NULL, cutoff TEXT NOT NULL, "
+            "scoring TEXT NOT NULL, started_day TEXT NOT NULL, cursor INTEGER)"
+        )
+        db.execute(
+            "INSERT INTO servers VALUES (100, 200, 300, 'Europe/Berlin', '00:00', "
+            "'players_beaten', '2026-11-13', NULL)"
+        )
+    store = Store(path)
+    try:
+        cfg = store.config(100)
+        assert cfg.language == "en"
+        assert cfg.announcement_style == "standard"
+        store.set_presentation(100, actor_id=1, language="de", style="compact")
+        assert store.config(100).language == "de"
+        assert store.config(100).announcement_style == "compact"
+    finally:
+        store.close()
 
 
 def test_prompt_retry_upgrade_preserves_existing_delivery_state(tmp_path, config):
@@ -360,6 +387,6 @@ def test_prompt_retry_upgrade_preserves_existing_delivery_state(tmp_path, config
     try:
         assert upgraded.prompt(100, DAY)["message_id"] == 7000
         assert upgraded.prompt(100, DAY)["retry_at"] is None
-        assert upgraded.db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 5
+        assert upgraded.db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 6
     finally:
         upgraded.close()

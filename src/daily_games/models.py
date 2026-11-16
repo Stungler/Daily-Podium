@@ -54,3 +54,5 @@ class ServerConfig:
     cutoff: str
     scoring: str
     started_day: date
+    language: str = "en"
+    announcement_style: str = "standard"

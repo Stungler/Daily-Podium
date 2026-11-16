@@ -2,6 +2,7 @@
 
 from datetime import date
 
+from .i18n import phrase
 from .models import Game, ServerConfig, Submission
 from .scoring import leaderboard
 
@@ -51,11 +52,15 @@ def game_snapshot(snapshot: dict, game: Game) -> dict:
     return {**snapshot, "rows": rows}
 
 
-def score_label(game: Game, result: dict | None) -> str:
+def score_label(game: Game, result: dict | None, language: str = "en") -> str:
     if result is None:
         return "—"
     if not result["solved"]:
-        return "❌ Failed (+0)"
+        return phrase(language, "❌ Failed (+0)", "❌ Nicht geschafft (+0)")
     score = result["score"]
-    label = f"{score} guesses" if game == Game.METAZOOA else f"{score:,}"
+    label = (
+        phrase(language, f"{score} guesses", f"{score} Versuche")
+        if game == Game.METAZOOA
+        else f"{score:,}"
+    )
     return f"{label} (+{result['points']})"

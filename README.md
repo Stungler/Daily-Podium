@@ -262,8 +262,8 @@ History contains only a message's latest edited content. Unrecorded edited messa
 during recovery because their original score/time cannot be established. Repost an unedited
 Share result while the day is open. Results already stored remain unchanged by later edits.
 
-Daily boards are frozen to durable snapshots, then posted. The final board is one compact embed
-in the board channel. In channel mode, a public thread attached to that message holds game
+Daily boards are frozen to durable snapshots, then posted. In standard style, the final
+board is one compact embed in the board channel. In channel mode, a public thread attached to that message holds game
 highlights, the full per-player results, and a weekly summary. The detail content and its
 delivery state are saved
 in SQLite, so a restart resumes incomplete threads without changing the frozen scores.
@@ -289,26 +289,48 @@ Read Message History permission is needed on the output channel and in threads f
 
 The default `channel` mode keeps the results channel and the 08:05 game-links post as before.
 An admin can choose `thread` during first `/setup`, or switch an existing server with
-`/result_mode thread`. Existing-server changes begin on the next competition day; earlier
+`!result_mode thread` (or `/result_mode` where slash commands are registered). Existing-server changes begin on the next competition day; earlier
 days retain their original routing and scores. `/result_mode channel` switches back the same
 way. The configured results channel becomes the parent for the daily results thread; the
 board channel can be the same or a different channel.
 
 In thread mode, the bot creates a short daily post and public results thread when the
 server's competition day opens at its cutoff. It pins that parent post and unpins only
-its previous daily post. The morning game links and TimeGuessr status edit that same
-parent post at 08:05 or when the expected puzzle is ready; they do not add a second
-morning post. Members paste Share results into the thread, where the bot applies the
+its previous daily post. In standard style, morning game links and TimeGuessr status
+edit that same parent post at 08:05 or when the expected puzzle is ready; they do not
+add a second morning post. Members paste Share results into the thread, where the bot applies the
 same scoring, duplicate protection, emoji reactions, and link-preview suppression.
 `/status` links to the active thread. Results posted in the parent channel after the
 thread opens get a reply pointing to the thread. If the bot was offline before it
 could create the thread, parent-channel Share messages from that gap are recovered
 using their original Discord timestamps.
 
-The final board still appears in the configured board channel five minutes after cutoff.
+In standard style, the final board appears in the configured board channel five minutes after cutoff.
 Its full results and weekly summary go into that day's results thread. Thread IDs,
 per-thread recovery cursors, pin state, and mode history are saved in SQLite so
 restarts and later mode changes do not reassign or lose accepted submissions.
+
+### Server language and compact announcements
+
+Admins with Manage Server can set `!language de` or `!language en` for that server.
+English is the default.
+Scheduled posts, leaderboards, commands, and result feedback use the selected language;
+changing it does not change accepted game Share formats or stored scores. The same settings work
+on any Discord server; no server name or ID is hardcoded.
+
+In thread mode, `!announcement_style compact` keeps the main channel to one pinned
+daily parent post. The choice applies to newly created daily posts; changing it during
+the day does not move or rewrite an existing post. The bot creates it at cutoff so
+players can submit immediately.
+At 08:05 it edits that post with yesterday's winner, the current month's top three
+from finalized days, and an invitation to use the thread. An edit does not create a
+new morning notification. The previous day's final board, highlights, full results,
+and weekly stats go into the previous day's results thread at cutoff + five minutes.
+Game links and TimeGuessr status go into today's thread at or after 08:05; if TimeGuessr
+has not reset, only that thread post waits, while the short parent update still appears.
+If a daily results thread is unavailable, the final board falls back to the configured
+board channel so standings are not lost. `!announcement_style standard` restores the
+original posting style. Compact style has an effect only in thread mode.
 
 A failed recovery prevents finalization rather than freezing an incomplete board. Failures
 are logged and retried. Backlogged competition days are processed when the bot comes back.

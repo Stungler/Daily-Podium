@@ -5,6 +5,7 @@ from datetime import date
 
 import discord
 
+from .i18n import phrase, scoring_label
 from .models import GAME_TITLES, Game
 from .periods import period_snapshot
 from .presentation import game_snapshot, score_label
@@ -38,20 +39,35 @@ def name_column(value: str, width: int = 18) -> str:
     return discord.utils.escape_mentions(result) + " " * (width - used)
 
 
-def compact_boards(snapshot, *, final, game=None, limit=None, scheduled=False):
+def compact_boards(snapshot, *, final, game=None, limit=None, scheduled=False, language="en"):
     view = game_snapshot(snapshot, game) if game else snapshot
     title = GAME_TITLES[game] if game else "Daily Games"
-    state = "Final standings" if final else "Current standings · provisional"
+    state = (
+        phrase(language, "Final standings", "Endstand")
+        if final
+        else phrase(language, "Current standings · provisional", "Aktueller Stand · vorläufig")
+    )
     rows = view["rows"][:limit] if limit else view["rows"]
     lines = []
-    header = f"{'#':>3} {'Player':18} {'Pts':>4}"
+    player_heading = phrase(language, "Player", "Spieler")
+    points_heading = phrase(language, "Pts", "Pkt")
+    header = f"{'#':>3} {player_heading:18} {points_heading:>4}"
     if game:
-        header += f" {'Guesses' if game == Game.METAZOOA else 'Score':>10}"
+        score_heading = (
+            phrase(language, "Guesses", "Versuche")
+            if game == Game.METAZOOA
+            else phrase(language, "Score", "Punkte")
+        )
+        header += f" {score_heading:>10}"
     for row in rows:
         line = f"{row['rank']:>3} {name_column(row['name'])} {row['total']:>4}"
         if game:
             result = row["games"][game.value]
-            raw = f"{result['score']:,}" if result["solved"] else "Failed"
+            raw = (
+                f"{result['score']:,}"
+                if result["solved"]
+                else phrase(language, "Failed", "Fehlversuch")
+            )
             line += f" {raw:>10}"
         lines.append(f"`{line}`")
     pages = [lines[index : index + 15] for index in range(0, len(lines), 15)] or [[]]
@@ -59,18 +75,32 @@ def compact_boards(snapshot, *, final, game=None, limit=None, scheduled=False):
     count = len(view["rows"])
     for index, page in enumerate(pages, start=1):
         description = (
-            "\n".join([f"`{header}`", *page]) if page else "No results for this competition day."
+            "\n".join([f"`{header}`", *page])
+            if page
+            else phrase(
+                language,
+                "No results for this competition day.",
+                "Für diesen Spieltag gibt es noch keine Ergebnisse.",
+            )
         )
         if limit and count > limit:
-            description += f"\n*Top {limit} of {count} players · full standings in the browser.*"
+            description += phrase(
+                language,
+                f"\n*Top {limit} of {count} players · full standings in the browser.*",
+                f"\n*Top {limit} von {count} Spielern · vollständige Rangliste im Browser.*",
+            )
         if scheduled:
             # Threads may be unavailable; !lb still works without a public dashboard.
             description = description.replace(
-                "full standings in the browser", "full standings: `!lb`"
+                phrase(
+                    language, "full standings in the browser", "vollständige Rangliste im Browser"
+                ),
+                phrase(language, "full standings: `!lb`", "vollständige Rangliste: `!lb`"),
             )
+            result_count = sum(len(row["games"]) for row in view["rows"])
             description = (
-                f"**{count} players · {sum(len(row['games']) for row in view['rows'])} results**\n"
-                + description
+                f"**{count} {phrase(language, 'players', 'Spieler')} · "
+                f"{result_count} {phrase(language, 'results', 'Ergebnisse')}**\n" + description
             )
         embed = discord.Embed(
             title=f"{title} · {snapshot['day']} · {state}",
@@ -80,10 +110,11 @@ def compact_boards(snapshot, *, final, game=None, limit=None, scheduled=False):
         entries = sum(len(row["games"]) for row in view["rows"])
         if game:
             entries = count
-        mode = "1 + players beaten" if snapshot["scoring"] == "players_beaten" else "placement"
+        mode = scoring_label(language, snapshot["scoring"])
         embed.set_footer(
             text=(
-                f"{count} players · {entries} results · {mode} · "
+                f"{count} {phrase(language, 'players', 'Spieler')} · "
+                f"{entries} {phrase(language, 'results', 'Ergebnisse')} · {mode} · "
                 f"{snapshot['timezone']} {snapshot['cutoff']} · {index}/{len(pages)}"
             )
         )
@@ -93,8 +124,11 @@ def compact_boards(snapshot, *, final, game=None, limit=None, scheduled=False):
     return embeds
 
 
-def daily_highlights(snapshot):
-    embed = discord.Embed(title=f"Game highlights · {snapshot['day']}", color=MAUVE)
+def daily_highlights(snapshot, language="en"):
+    embed = discord.Embed(
+        title=f"{phrase(language, 'Game highlights', 'Spiel-Highlights')} · {snapshot['day']}",
+        color=MAUVE,
+    )
     for game in Game:
         rows = game_snapshot(snapshot, game)["rows"]
         solved = [row for row in rows if row["games"][game.value]["solved"]]
@@ -102,11 +136,21 @@ def daily_highlights(snapshot):
             winners = [row for row in solved if row["rank"] == solved[0]["rank"]]
             names = ", ".join(player_name(row["name"]) for row in winners[:5])
             if len(winners) > 5:
-                names += f" +{len(winners) - 5} tied"
-            score = score_label(game, winners[0]["games"][game.value])
-            value = f"**{names}** · {score}\n{len(rows)} played · {len(solved)} solved"
+                names += phrase(
+                    language, f" +{len(winners) - 5} tied", f" +{len(winners) - 5} gleichauf"
+                )
+            score = score_label(game, winners[0]["games"][game.value], language)
+            value = phrase(
+                language,
+                f"**{names}** · {score}\n{len(rows)} played · {len(solved)} solved",
+                f"**{names}** · {score}\n{len(rows)} gespielt · {len(solved)} geschafft",
+            )
         else:
-            value = f"{len(rows)} played · no successful results"
+            value = phrase(
+                language,
+                f"{len(rows)} played · no successful results",
+                f"{len(rows)} gespielt · keine erfolgreichen Ergebnisse",
+            )
         embed.add_field(name=GAME_TITLES[game], value=value, inline=False)
     return embed
 
@@ -115,37 +159,62 @@ def weekly_snapshot(snapshots, through: date, started: date, game: Game | None =
     return period_snapshot(snapshots, through, started, "week", game)
 
 
-def weekly_embed(summary):
-    return period_embed(summary)
+def weekly_embed(summary, language="en"):
+    return period_embed(summary, language)
 
 
-def period_embed(summary):
+def period_embed(summary, language="en"):
+    win_width = 4 if language == "de" else 3
     lines = [
         f"`{row['rank']:>3} {name_column(row['name'])} {row['points']:>4} "
-        f"{row['days']:>2} {row['wins']:>3}`"
+        f"{row['days']:>2} {row['wins']:>{win_width}}`"
         for row in summary["rows"][:10]
     ]
-    header = f"`{'#':>3} {'Player':18} {'Pts':>4} {'D':>2} {'Win':>3}`"
+    player_heading = phrase(language, "Player", "Spieler")
+    points_heading = phrase(language, "Pts", "Pkt")
+    win_heading = phrase(language, "Win", "Sieg")
+    header = (
+        f"`{'#':>3} {player_heading:18} {points_heading:>4} {'D':>2} {win_heading:>{win_width}}`"
+    )
     description = (
         "\n".join([header, *lines])
         if lines
-        else f"No player results in finalized days for this {summary['period']} yet."
+        else phrase(
+            language,
+            f"No player results in finalized days for this {summary['period']} yet.",
+            "Für diesen Zeitraum gibt es noch keine abgeschlossenen Spielergebnisse.",
+        )
     )
     if len(summary["rows"]) > 10:
-        description += f"\n*Top 10 of {len(summary['rows'])} players.*"
+        description += phrase(
+            language,
+            f"\n*Top 10 of {len(summary['rows'])} players.*",
+            f"\n*Top 10 von {len(summary['rows'])} Spielern.*",
+        )
+    period_heading = (
+        phrase(language, "This week", "Diese Woche")
+        if summary["period"] == "week"
+        else phrase(language, "This month", "Dieser Monat")
+    )
+    game_heading = (
+        GAME_TITLES[Game(summary["game"])]
+        if summary["game"] != "all"
+        else phrase(language, "Combined", "Gesamt")
+    )
     embed = discord.Embed(
-        title=(
-            f"This {summary['period']} · "
-            f"{GAME_TITLES[Game(summary['game'])] if summary['game'] != 'all' else 'Combined'} · "
-            f"{summary['start']} → {summary['through']}"
-        ),
+        title=(f"{period_heading} · {game_heading} · {summary['start']} → {summary['through']}"),
         description=description,
         color=MAUVE,
     )
     embed.set_footer(
         text=(
-            f"{summary['finalized_days']}/{summary['expected_days']} days finalized · "
-            "saved daily points added · d = days played · wins include ties"
+            phrase(
+                language,
+                f"{summary['finalized_days']}/{summary['expected_days']} days finalized · "
+                "saved daily points added · d = days played · wins include ties",
+                f"{summary['finalized_days']}/{summary['expected_days']} Tage abgeschlossen · "
+                "gespeicherte Tagespunkte addiert · D = Spieltage · Gleichstände zählen als Sieg",
+            )
         )
     )
     return embed
@@ -205,43 +274,68 @@ def player_stats_snapshot(snapshots: list[dict], user_id: int, as_of: date | Non
     return result
 
 
-def player_stats_embed(stats: dict, display_name: str) -> discord.Embed:
+def player_stats_embed(stats: dict, display_name: str, language="en") -> discord.Embed:
     if stats["days_played"]:
         average = stats["points"] / stats["days_played"]
-        description = (
+        description = phrase(
+            language,
             f"**{stats['days_played']}/{stats['finalized_days']}** days played · "
             f"**{stats['daily_wins']}** daily wins\n"
             f"**{stats['points']}** total points · **{average:.1f}** points per played day\n"
             f"🔥 **{stats['streak']['current']}** current streak · "
             f"**{stats['streak']['best']}** best\n"
-            f"Last played: {stats['last_day']}"
+            f"Last played: {stats['last_day']}",
+            f"**{stats['days_played']}/{stats['finalized_days']}** Tage gespielt · "
+            f"**{stats['daily_wins']}** Tagessiege\n"
+            f"**{stats['points']}** Punkte gesamt · **{average:.1f}** Punkte je Spieltag\n"
+            f"🔥 **{stats['streak']['current']}** aktuelle Serie · "
+            f"**{stats['streak']['best']}** Rekord\n"
+            f"Zuletzt gespielt: {stats['last_day']}",
         )
     else:
-        description = "No results in finalized days for this player yet."
+        description = phrase(
+            language,
+            "No results in finalized days for this player yet.",
+            "Für diesen Spieler gibt es noch keine Ergebnisse aus abgeschlossenen Tagen.",
+        )
     embed = discord.Embed(
-        title=f"Player stats · {player_name(display_name)}",
+        title=(
+            f"{phrase(language, 'Player stats', 'Spielerstatistik')} · {player_name(display_name)}"
+        ),
         description=description,
         color=MAUVE,
     )
     for game in Game:
         data = stats["games"][game.value]
         if not data["played"]:
-            value = "No finalized results yet."
+            value = phrase(
+                language, "No finalized results yet.", "Noch keine abgeschlossenen Ergebnisse."
+            )
         else:
             if data["solved"]:
-                unit = " guesses" if game == Game.METAZOOA else ""
+                unit = phrase(language, " guesses", " Versuche") if game == Game.METAZOOA else ""
                 average = f"{data['score_sum'] / data['solved']:,.1f}{unit}"
                 best = f"{data['best']:,}{unit}"
             else:
                 average = best = "—"
-            value = (
+            value = phrase(
+                language,
                 f"**{data['played']}** played · **{data['solved']}** solved · "
                 f"**{data['wins']}** wins\n"
                 f"🔥 {data['streak']['current']} current · {data['streak']['best']} best\n"
-                f"{data['points']} pts · avg {average} · best {best}"
+                f"{data['points']} pts · avg {average} · best {best}",
+                f"**{data['played']}** gespielt · **{data['solved']}** geschafft · "
+                f"**{data['wins']}** Siege\n"
+                f"🔥 {data['streak']['current']} aktuell · {data['streak']['best']} Rekord\n"
+                f"{data['points']} Pkt. · Ø {average} · Bestwert {best}",
             )
         embed.add_field(name=GAME_TITLES[game], value=value, inline=False)
     embed.set_footer(
-        text="This server · finalized days only · ties count as wins · score averages use solves"
+        text=phrase(
+            language,
+            "This server · finalized days only · ties count as wins · score averages use solves",
+            "Dieser Server · nur abgeschlossene Tage · Gleichstände zählen als Sieg · "
+            "Ø nur aus Erfolgen",
+        )
     )
     return embed
