@@ -92,6 +92,9 @@ Using `python -m daily_games.dashboard` works with the existing editable install
 - Today's participation, local competition date, and countdown to cutoff.
 - Combined and individual-game boards for today, yesterday, or a selected date.
 - Daily, week-to-date, and month-to-date boards for combined and individual games.
+- Daily game tabs follow the selected date's server lineup. Period tabs include
+  games that were active during the selected week or month. Wiki Game results show
+  steps and elapsed time.
   Period boards add saved daily points through the selected date and show days played,
   wins (including ties), and finalized-day coverage. Provisional days do not count.
 - Player streak badges show current/best participation days (🔥 current/best).

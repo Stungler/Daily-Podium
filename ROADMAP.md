@@ -67,6 +67,8 @@ The services and backup timer are active; see [SYSTEMD.md](SYSTEMD.md).
 - Private `/myday` checklist for accepted/missing games, provisional points,
   cutoff, and streaks, without a channel message.
 - Individual game views: `!lb sizeitup`, `!lb timeguessr`, `!lb metazooa`.
+- Global and per-server game rotation, with The Wiki Game Daily available as
+  `wikigame`. See [README.md](README.md#game-rotation) for activation.
 - Date filters and a slash-command game selector.
 - Persistent scores, configuration, and frozen final boards in SQLite.
 - Private operations signals for Gateway connection, scheduler, final posting,

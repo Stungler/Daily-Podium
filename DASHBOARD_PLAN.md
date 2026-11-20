@@ -1,8 +1,8 @@
 # Tailscale dashboard plan
 
-Status: first version implemented in source, 2026-11-14; not started or deployed.
-See [DASHBOARD.md](DASHBOARD.md) for manual run/test instructions. The Discord bot
-has not been stopped or restarted. Other ideas are retained in [ROADMAP.md](ROADMAP.md).
+This is the original dashboard design. See [DASHBOARD.md](DASHBOARD.md) for the
+current dashboard and [SYSTEMD.md](SYSTEMD.md) for the deployed services.
+Other ideas are retained in [ROADMAP.md](ROADMAP.md).
 This plan describes the private operations dashboard. A separate, subsequently
 requested public leaderboard is documented in [PUBLIC_DASHBOARD.md](PUBLIC_DASHBOARD.md).
 

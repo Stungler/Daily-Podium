@@ -20,6 +20,9 @@ database but cannot change scores, settings, or bot processes.
 - The page has a **This server / Global leaderboard** toggle, a community
   selector, game tabs, date controls, and daily/weekly/monthly selection. URLs
   retain the selected date, game, and period.
+- Daily game tabs follow the lineup for the selected server or global board and
+  date. Weekly and monthly tabs include games active during that period. Wiki
+  Game results show steps and elapsed time.
 - Week-to-date and month-to-date standings sum saved daily points through the
   selected date, with days played, tied wins, and finalized-day coverage.
 - Player badges show exact current/best participation streaks. Combined counts
@@ -38,8 +41,10 @@ excluded from the public API. The existing private dashboard stays tailnet-only.
 
 ## Global scoring rules
 
-Each player is identified internally by Discord user ID. For each game and
-recorded competition date, only that player's **earliest accepted submission
+Each player is identified internally by Discord user ID. The global board uses
+the global lineup for each date. A server with its own lineup contributes
+accepted results for the games that overlap. For each game and recorded
+competition date, only that player's **earliest accepted submission
 across all servers** counts. A later submission with a better score does not
 replace it. An earlier failure also takes precedence over a later successful
 submission. Voided results are excluded.

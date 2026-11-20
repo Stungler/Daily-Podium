@@ -1,5 +1,8 @@
 # Daily Games Bot implementation plan
 
+This is the original launch plan. See [README.md](README.md#game-rotation)
+for the current game catalog and rotation commands.
+
 ## Agreed scope
 
 - Python 3.12+, developed/run locally on macOS or Linux/WSL2; test using Discord.

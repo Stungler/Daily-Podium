@@ -84,22 +84,24 @@ sequenceDiagram
 
 `bot.py` listens to configured results channels and its saved daily results threads
 for score ingestion. `parsers.py`
-recognizes the three games' Share formats; it does not ask those sites to verify a
-player's score. `calendar.py` maps numbered puzzles to competition dates and applies
-the guild's cutoff. `service.py` rejects wrong-channel, old, future, duplicate, and
-already-finalized results. `storage.py` inserts valid results into SQLite. Accepted
+recognizes four Share formats. Scores are self-reported. For Wiki Game, the bot
+checks the start and target against the official route for the competition date.
+`calendar.py` maps numbered puzzles to competition dates and applies the guild's
+cutoff. `service.py` checks the dated lineup, puzzle identity, and whether the
+competition day is open. `storage.py` inserts valid results into SQLite. Accepted
 single-game messages receive ✅ plus streak reactions; invalid input gets feedback.
 For recognized Share messages, the bot also suppresses link previews when it has
 Manage Messages in the results channel; it does not edit the player's text.
 
 Each guild's standings are independent. `scoring.py` ranks TimeGuessr and Size It Up
-by higher score, Metazooa by fewer guesses, and assigns points under that guild's
-configured rule. `presentation.py` turns those results into a plain snapshot.
+by higher score, Metazooa by fewer guesses, and Wiki Game by fewer steps with time as
+the tiebreaker. The guild's scoring rule turns those ranks into points.
+`presentation.py` turns those results into a plain snapshot.
 `discord_views.py` formats that snapshot as Discord embeds. `/myday`, weekly/monthly
 boards, personal stats, and the dashboards reuse the same stored results or frozen
 snapshots. The public **global** leaderboard is a derived view: it selects each user's
-earliest accepted submission per game and date across guilds, then recalculates points
-for that shared field. It never changes per-guild boards.
+earliest accepted submission across guilds for each game in that date's global
+lineup, then recalculates points for that shared field.
 
 The bot keeps a parent-channel history cursor per guild and a separate cursor for
 each daily results thread. After startup or a reconnect, it reads missed messages
@@ -146,6 +148,17 @@ every network failure. Old days do not receive backfilled game-links posts.
 
 ## Where the code lives
 
+The supported game catalog is separate from the active lineup. `rotation.py`
+reads dated global and server changes from SQLite. Live and recovered results
+resolve the lineup using the submission's competition date. Server snapshots
+record the lineup for their date, and cross-server standings use the global
+lineup for each date. A snapshot created before rotations uses the original trio.
+
+`wiki_daily.py` reads the dated route data from the public script linked by the
+official game page. It caches individual routes in SQLite. Share text supplies
+steps and time, while the cached route establishes puzzle identity. Wiki Game
+submissions and snapshots store elapsed seconds separately from steps.
+
 | File or group | Responsibility and output |
 | --- | --- |
 | `__main__.py` | Loads `.env`, opens SQLite, holds the single-writer file lock, starts the Discord bot |
@@ -184,9 +197,10 @@ every network failure. Old days do not receive backfilled game-links posts.
   `gdrive:daily-podium-backups`. The separate backup password is never included in
   those archives.
 - **External services:** Discord carries commands, result messages, reactions,
-  embeds, and threads. TimeGuessr is queried only for its daily number and reset
-  timer. Magnitudle and Metazooa appear as play links; the bot does not call their
-  APIs. Tailscale carries private dashboard access and the public Funnel relay.
+  embeds, and threads. The bot reads TimeGuessr's daily number and reset timer
+  when TimeGuessr is active. The Wiki Game Daily supplies dated routes for
+  validation. Magnitudle and Metazooa appear as play links. Tailscale carries
+  private dashboard access and the public Funnel relay.
 
 For setup and permissions see [README.md](README.md). For the current service commands
 and backup procedure see [SYSTEMD.md](SYSTEMD.md). For web routes and public-data rules

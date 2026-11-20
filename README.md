@@ -1,11 +1,12 @@
 # Daily Podium
 
 A Python Discord bot for independent daily competitions in each server. Players paste
-their Share results from **TimeGuessr**, **Magnitudle Size It Up (standard)**, and
-**Metazooa**. The bot records scores, serves a combined leaderboard, and posts the final
-standings after the daily deadline.
+their Share results from the active lineup. The supported games are **TimeGuessr**,
+**Magnitudle Size It Up (standard)**, **Metazooa**, and **The Wiki Game Daily**. The bot
+records scores, serves a combined leaderboard, and posts the final standings after
+the daily deadline.
 
-The implementation plan and decisions are in [PLAN.md](PLAN.md).
+The original implementation plan is in [PLAN.md](PLAN.md).
 A private [Tailscale dashboard](DASHBOARD.md) is available as a separate read-only
 process. Its [design plan](DASHBOARD_PLAN.md) and other feature ideas in
 [ROADMAP.md](ROADMAP.md) are retained in the repo.
@@ -61,6 +62,40 @@ The environment and `.env` are local to this checkout; Git does not copy them wh
 cloning. Keep any existing WSL bot process stopped while testing this copy: only one
 deployment should run with the same bot token. Existing scores/settings are in the
 old deployment's SQLite database, not in Git; a fresh clone starts with no server setup.
+
+## Game rotation
+
+Each competition date has three active games. TimeGuessr, Size It Up, and Metazooa
+are the default lineup. The Wiki Game Daily is available as `wikigame`. A rotation
+changes future competition days and preserves past standings, points, and results.
+
+| Command | Who can use it | What it does |
+| --- | --- | --- |
+| `!rotation` | Anyone on a configured server | Show its active lineup and next change |
+| `!rotation set timeguessr sizeitup wikigame` | Manage Server | Set this server's trio starting the next competition day |
+| `!rotation inherit` | Manage Server | Return this server to the global lineup the next competition day |
+| `!rotation_global set timeguessr sizeitup wikigame` | Bot owner | Schedule the global trio |
+
+Slash versions are available wherever the bot's slash commands are registered.
+After updating the code, restart the bot and both dashboards as described in
+[SYSTEMD.md](SYSTEMD.md). The bot applies the database migration on startup.
+To replace Metazooa across inheriting servers, send
+`!rotation_global set timeguessr sizeitup wikigame` from the Discord application
+owner account. The confirmation gives the effective date. Use `!rotation` on
+each server to check its lineup and whether it inherits the global setting.
+The global change takes effect on the next date that has not opened on any
+configured server. Each server turns over at its own cutoff. The cross-server
+leaderboard includes only games in the global trio for that date. Weekly and
+monthly points earned before the swap still count. Per-game streaks pause during
+inactive days and break when a player misses an active day.
+
+Paste the Share result from [The Wiki Game Daily](https://www.thewikigamedaily.com/).
+The bot checks the route against the publisher's dated challenge, then ranks by
+fewest steps, with fastest time breaking ties. Equal steps and time share rank.
+If the site is unavailable and the route is missing from the local cache, the bot
+owner can register the published route with
+`!wiki_route YYYY-MM-DD "Start article" "Target article"`. Players can retry before
+cutoff. As with the other games, the bot accepts self-reported scores.
 
 ## Discord application setup
 
@@ -130,7 +165,8 @@ the Share message's link preview while keeping its text and link intact:
 ```
 
 `/leaderboard` offers `day` and `game` options (All games, TimeGuessr, Size It Up,
-Metazooa). Existing `!lb [day]` commands still work; `!lb yesterday sizeitup` also works.
+Metazooa, and The Wiki Game Daily). Existing `!lb [day]` commands still work;
+`!lb yesterday sizeitup` and `!lb wikigame` also work.
 Single-game boards show only that game's participants, ranked by its awarded points with
 shared ranks for ties. Points match the combined board, including placement scoring.
 Historical boards use the saved final snapshot; viewing a game does not change it or the
@@ -139,7 +175,7 @@ Leaderboard replies use compact aligned embeds. With public dashboard links conf
 they show the top 10 and link to the full browser view; without links, they paginate all players.
 `!weekly [day] [game]` and `!monthly [day] [game]` (also slash commands) sum saved
 daily points through the selected date. Omit the game for combined standings or choose
-TimeGuessr, Size It Up, or Metazooa. Weeks start Monday; months start on the first.
+any supported game. Weeks start Monday and months start on the first.
 Only finalized days count. The footer shows finalized days, days played, and tied wins.
 Both dashboards offer the same daily, weekly, and monthly filters.
 `!stats` and `/stats` show your own stats, or another server member's stats when
@@ -164,8 +200,8 @@ current competition day, missing game links, provisional points, cutoff, and
 current/best streaks. It sends no new message to the channel.
 When public dashboard links are configured, leaderboard replies also link to
 this server's full browser board and the global leaderboard. The global board
-counts each player's earliest accepted submission per game and date across
-servers, then recalculates points for the shared field.
+counts each player's earliest accepted submission across servers for each game
+in the global lineup for that date, then recalculates points for the shared field.
 
 With several servers, paste the same result
 in each server's results channel to compete there; results do not automatically cross-post.
@@ -176,13 +212,16 @@ in each server's results channel to compete there; results do not automatically 
 |---|---|---|
 | `/ping` | `!ping` | Connection check |
 | `/help` | `!help` | Instructions |
-| `/games` | `!games` | Links to the three games |
+| `/games [day]` | `!games [day]` | Links to the selected day's lineup |
 | `/leaderboard [day] [game]` | `!lb [day] [game]` or `!lb game [day]` | Combined or single-game current, yesterday, or dated board |
 | `/weekly [day] [game]` | `!weekly [day] [game]` | Week-to-date combined or per-game points from finalized boards |
 | `/monthly [day] [game]` | `!monthly [day] [game]` | Month-to-date combined or per-game points from finalized boards |
 | `/stats [member]` | `!stats [@member]` | Personal history in this server from finalized days |
 | `/myday` | — | Private current-day checklist, provisional points, and streaks |
-| `/status` | `!status` | Server settings, expected puzzles, game links, deadline, and TimeGuessr's live next reset |
+| `/status [day]` | `!status [day]` | Lineup, expected puzzles, game links, deadline, and today's TimeGuessr reset when active |
+| `/rotation` | `!rotation`, `!rotation set <game1> <game2> <game3>`, `!rotation inherit` | View or manage this server's lineup |
+| `/rotation_global` | `!rotation_global set <game1> <game2> <game3>` | Bot owner schedules the global lineup |
+| `/wiki_route` | `!wiki_route <date> "Start article" "Target article"` | Bot owner registers the published route if the official lookup is unavailable |
 | `/setup` | `!setup #results [#boards] [timezone] [cutoff] [scoring] [mode]` | Admin configuration; mode is `channel` (default) or `thread` |
 | `/result_mode` | `!result_mode thread` / `!result_mode channel` | Admin switch of submission mode from the next competition day |
 | `/puzzle_date` | `!puzzle_date timeguessr 1262 2026-11-13` | Admin date correction for a numbered puzzle |
@@ -204,7 +243,8 @@ at runtime.
   all three games that day; each worse rank earns one fewer. Each game has the same
   winning value, including when someone is its only player. Ties share the better rank
   and following places skip (1, 2, 2, 4). Failures still earn zero.
-- TimeGuessr/Size It Up rank by highest total; Metazooa ranks by fewest guesses.
+- TimeGuessr and Size It Up rank by highest score. Metazooa ranks by fewest guesses.
+  The Wiki Game Daily ranks by fewest steps, then fastest time.
 - Successful zero-point game scores (such as TimeGuessr 0/50,000) are valid submissions.
 - Combined ties share a rank. Alphabetical order is only display order within that tie.
 - First accepted result wins. Editing/deleting/reposting a message does not improve a score.
@@ -270,8 +310,8 @@ in SQLite, so a restart resumes incomplete threads without changing the frozen s
 In channel mode, after the final board, the bot posts one compact game-links and status
 embed for the new competition day in the same channel. The final board posts five minutes
 after cutoff.
-The game-links message waits until at least 08:05 in that server's timezone and checks the
-official TimeGuessr daily page. If the expected puzzle is still unavailable, it retries every
+The game-links message waits until at least 08:05 in that server's timezone. When
+TimeGuessr is in the lineup, the bot checks its official daily page. If the expected puzzle is still unavailable, it retries every
 five minutes until noon; it then posts with a warning even if TimeGuessr is delayed. Results
 can be submitted as soon as each game's puzzle is available. Delivery state is saved and
 reconciled after a restart; old days are never backfilled with new links posts. The TimeGuessr
@@ -350,6 +390,8 @@ src/daily_games/
   models.py        Shared data structures
   storage.py       SQLite settings, submissions, snapshots, cursors and audit
   service.py       Submission eligibility and duplicate rules
+  rotation.py      Dated global and per-server game lineups
+  wiki_daily.py    Official Wiki Game puzzle route lookup
   scoring.py       Per-game points and combined ranks
   presentation.py  Stable, serializable leaderboard snapshots
   discord_views.py Compact Discord embeds, daily highlights, weekly summaries
