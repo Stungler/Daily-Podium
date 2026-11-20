@@ -82,6 +82,21 @@ def test_wiki_share_boundary_and_route_validation(store, config):
     assert parse_message(expanded) == parse_message(SHARE)
 
 
+def test_wiki_path_without_link_records_reported_steps_and_time(store, config):
+    store.set_rotation(0, DAY, WIKI_LINEUP, actor_id=1)
+    store.register_wiki_route(DAY, "Poet", "Pluto")
+    share = (
+        "Poet ➡️ Pluto ⏰ 02:07 🦶5 (Poet ➡️ Renaissance ➡️ Leonardo da Vinci ➡️ "
+        "Galilean moons ➡️ Solar System object ➡️ Pluto)"
+    )
+    assert submit(store, config, share.replace("Poet ➡️ Pluto", "Poet ➡️ Neptune")).status == (
+        "wrong_puzzle"
+    )
+    assert submit(store, config, share).status == "accepted"
+    saved = store.results(config.guild_id, DAY)[0]
+    assert (saved.score, saved.elapsed_seconds) == (5, 127)
+
+
 def test_wiki_uses_server_cutoff_with_original_timestamp(store, config):
     cfg = replace(config, cutoff="06:00")
     store.configure(cfg, actor_id=1)

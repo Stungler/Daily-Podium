@@ -21,8 +21,8 @@ INTEGER = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
 WIKI_SHARE = re.compile(
     r"(?P<start>[^\n]{1,300}?)\s+➡️?\s+(?P<target>[^\n]{1,300}?)\s+"
     r"⏰\s*(?P<time>[0-9]{1,4}(?::[0-9]{2}){1,2})\s+"
-    r"🦶\s*(?P<steps>[0-9]{1,5})(?:\s+\([^\n]*\))?\s+🔗\s*"
-    r"<?https://(?:www\.)?thewikigamedaily\.com/?>?",
+    r"🦶\s*(?P<steps>[0-9]{1,5})(?:\s+\((?P<path>[^\n]+)\))?"
+    r"(?:\s+🔗\s*(?P<link><?https://(?:www\.)?thewikigamedaily\.com/?>?))?",
     re.IGNORECASE,
 )
 WIKI_ERROR = "The Wiki Game Daily: paste the complete Share result with steps and time."
@@ -97,11 +97,13 @@ def parse_message(content: str) -> tuple[list[ParsedResult], list[str]]:
     results, errors = [], []
     other_lines = []
     for line in content.split("\n"):
-        if "⏰" not in line or "thewikigamedaily.com" not in line.lower():
+        has_link = "thewikigamedaily.com" in line.lower()
+        has_path_markers = "➡" in line and "🦶" in line and "(" in line
+        if "⏰" not in line or not (has_link or has_path_markers):
             other_lines.append(line)
             continue
         match = WIKI_SHARE.fullmatch(line.strip().strip("`").strip())
-        if match is None:
+        if match is None or not (match["path"] or match["link"]):
             errors.append(WIKI_ERROR)
             continue
         parts = [int(piece) for piece in match["time"].split(":")]
