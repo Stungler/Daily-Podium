@@ -12,6 +12,10 @@ from .models import GAME_URLS, Game
 
 ORIGIN = GAME_URLS[Game.WIKI].rstrip("/")
 APP_SCRIPT = re.compile(r"/_next/static/chunks/pages/_app-[a-zA-Z0-9]+\.js")
+ROUTE_TABLE = re.compile(r"""JSON\.parse\(\s*'(?=\{"\d{4}-\d{2}-\d{2}"\s*:)""")
+UNESCAPED_QUOTE = re.compile(r"(?<!\\)(?:\\\\)*'")
+JS_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|\r\n|[\s\S])")
+JS_SPECIAL = {"b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v", "0": "\0"}
 
 
 def route_key(start: str, target: str) -> str:
@@ -34,16 +38,45 @@ class Scripts(HTMLParser):
                 self.app = source
 
 
+def _decode_escape(match: re.Match[str]) -> str:
+    value = match[1]
+    if len(value) > 1 and value[0] in "ux":
+        return chr(int(value[1:], 16))
+    if value in {"\n", "\r", "\r\n", "\u2028", "\u2029"}:
+        return ""
+    return JS_SPECIAL.get(value, value)
+
+
+def _route_fields(item) -> tuple[str, str] | None:
+    if isinstance(item, dict):
+        start, target = item.get("START_PAGE"), item.get("END_PAGE")
+        if all(isinstance(value, str) and value.strip() for value in (start, target)):
+            return start, target
+    return None
+
+
 def parse_route(script: str, day: date) -> tuple[str, str] | None:
+    # Next.js wraps the publisher's JSON in a JavaScript string literal. Decode
+    # that outer layer first, including apostrophes and JavaScript hex escapes.
+    for table in ROUTE_TABLE.finditer(script):
+        closing = UNESCAPED_QUOTE.search(script, table.end())
+        if closing is None:
+            continue
+        literal = script[table.end() : closing.end() - 1]
+        try:
+            payload = json.loads(JS_ESCAPE.sub(_decode_escape, literal))
+        except ValueError:
+            continue
+        if isinstance(payload, dict) and (route := _route_fields(payload.get(day.isoformat()))):
+            return route
+
     for match in re.finditer(rf'"{day.isoformat()}"\s*:\s*(?=\{{)', script):
         try:
             item, _ = json.JSONDecoder().raw_decode(script, match.end())
         except ValueError:
             continue
-        if isinstance(item, dict):
-            start, target = item.get("START_PAGE"), item.get("END_PAGE")
-            if all(isinstance(value, str) and value.strip() for value in (start, target)):
-                return start, target
+        if route := _route_fields(item):
+            return route
     return None
 
 

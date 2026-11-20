@@ -154,6 +154,15 @@ def test_official_route_parser_requires_exact_date():
     assert parse_route(asset, DAY + timedelta(days=1)) is None
 
 
+def test_official_route_parser_decodes_javascript_escapes():
+    script = (
+        r"""JSON.parse('{"2026-11-20":{"START_PAGE":"Thomas Edison","END_PAGE":"McDonald\'s"},"""
+        r""""2026-11-21":{"START_PAGE":"Ros\xe9","END_PAGE":"Caf\u00e9"}}')"""
+    )
+    assert parse_route(script, date(2026, 11, 20)) == ("Thomas Edison", "McDonald's")
+    assert parse_route(script, date(2026, 11, 21)) == ("Rosé", "Café")
+
+
 async def test_rotation_commands_scope_and_timeguessr_opt_out(store, config, monkeypatch):
     bot = DailyGamesBot(store)
     owner = AsyncMock(return_value=False)
