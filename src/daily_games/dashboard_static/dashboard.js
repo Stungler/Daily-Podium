@@ -2,8 +2,7 @@
 
 const $ = (id) => document.getElementById(id);
 const state = { game: "all", day: "today", period: "day", server: "", data: null, busy: false, changed: false, lastSuccess: null, stale: false };
-const names = { timeguessr: "TimeGuessr", sizeitup: "Size It Up", metazooa: "Metazooa" };
-const games = Object.keys(names);
+let names = {};
 const fmt = new Intl.NumberFormat();
 
 function el(tag, className, text) {
@@ -32,6 +31,7 @@ function since(value, zone) {
 function gameScore(game, result) {
   if (!result) return "—";
   if (!result.solved) return "Failed";
+  if (game === "wikigame") return wikiScore(result);
   return game === "metazooa" ? `${fmt.format(result.score)} guesses` : fmt.format(result.score);
 }
 function cell(tag, textValue, className) { return el(tag, className, textValue); }
@@ -43,9 +43,37 @@ function streakChip(streak) {
   return chip;
 }
 
+
+function updateGameTabs(lineup) {
+  const options = ["all", ...lineup];
+  if (!options.includes(state.game)) options.push(state.game);
+
+  const tabs = $("game-tabs");
+  if ([...tabs.children].map((button) => button.dataset.game).join(",") !== options.join(",")) {
+    tabs.replaceChildren(...options.map((game) => {
+      const button = el("button", "tab", game === "all" ? "Combined" : names[game]);
+      button.type = "button";
+      button.dataset.game = game;
+      return button;
+    }));
+  }
+  for (const button of tabs.children) {
+    const active = button.dataset.game === state.game;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+}
+
+function wikiScore(result) {
+  if (result.elapsed_seconds == null) return `${result.score} steps`;
+  const minutes = Math.floor(result.elapsed_seconds / 60);
+  const seconds = String(result.elapsed_seconds % 60).padStart(2, "0");
+  return `${result.score} steps · ${minutes}:${seconds}`;
+}
+
 function renderBoard(selected) {
   const board = selected.board;
-  const activeGames = state.game === "all" ? games : [state.game];
+  const activeGames = state.game === "all" ? board.lineup : [state.game];
   const periodBoard = selected.period_board;
   const label = { day: "Daily", week: "Weekly", month: "Monthly" }[state.period];
   text("board-title", `${state.game === "all" ? "Combined" : names[state.game]} · ${label.toLowerCase()} standings`);
@@ -54,11 +82,7 @@ function renderBoard(selected) {
   text("board-state", status);
   const periodComplete = periodBoard && periodBoard.expected_days > 0 && periodBoard.finalized_days === periodBoard.expected_days;
   $("board-state").className = `badge ${periodBoard ? periodComplete ? "final" : "pending" : selected.board_state === "final" ? "final" : selected.board_state === "closed_pending" ? "pending" : ""}`;
-  document.querySelectorAll("[data-game]").forEach((button) => {
-    const active = button.dataset.game === state.game;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
+  updateGameTabs(selected.period_games);
   if (periodBoard) {
     const head = el("tr");
     ["Rank", "Player", "Points", "Days", "Wins"].forEach((name) => head.append(cell("th", name)));
@@ -148,6 +172,7 @@ function renderActivity(selected) {
 }
 
 function render(data) {
+  names = Object.fromEntries(data.games.map(({id, name}) => [id, name]));
   const selected = data.selected;
   const options = data.servers.map((server) => {
     const option = el("option", "", `Server ${server.id}`);
@@ -186,7 +211,7 @@ function render(data) {
   text("database-state", "Readable");
   $("database-state").className = "good";
   text("latest-result", selected.recent.length ? clock(selected.recent[0].submitted_at, selected.config.timezone) : "No results yet");
-  $("participation").replaceChildren(...games.map((game) => {
+  $("participation").replaceChildren(...Object.keys(selected.today_counts.games).map((game) => {
     const row = el("div", "participation-item");
     const label = el("div", "participation-label");
     const count = selected.today_counts.games[game];
@@ -258,7 +283,13 @@ function tick() {
 }
 
 $("server").addEventListener("change", () => { state.server = $("server").value; refresh(); });
-document.querySelectorAll("[data-game]").forEach((button) => button.addEventListener("click", () => { state.game = button.dataset.game; refresh(); }));
+$("game-tabs").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-game]");
+  if (button) {
+    state.game = button.dataset.game;
+    refresh();
+  }
+});
 $("period").addEventListener("change", () => { state.period = $("period").value; refresh(); });
 $("day").addEventListener("change", () => {
   $("custom-day").hidden = $("day").value !== "custom";

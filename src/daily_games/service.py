@@ -36,8 +36,20 @@ def accept_result(
                 "Ergebnisse gehören in den eingestellten Ergebniskanal dieses Servers.",
             ),
         )
-    day = puzzle_day(result, store.override(config.guild_id, result.game, result.puzzle))
     expected = active_day(submitted_at, config)
+    if result.game not in store.rotation(config.guild_id).games_on(expected):
+        return Outcome(
+            "inactive",
+            phrase(
+                language,
+                "This game is out of today's lineup.",
+                "Dieses Spiel ist heute nicht in der Rotation.",
+            ),
+        )
+    if result.game == Game.WIKI:
+        day = expected
+    else:
+        day = puzzle_day(result, store.override(config.guild_id, result.game, result.puzzle))
     if day < config.started_day or day < expected:
         detail = phrase(
             language,
@@ -62,6 +74,35 @@ def accept_result(
                 f"Dieses Rätsel gehört zum {day}; dieser Spieltag hat noch nicht begonnen.",
             ),
         )
+    if result.game == Game.WIKI:
+        if result.elapsed_seconds is None or result.elapsed_seconds < 0:
+            return Outcome(
+                "wrong_puzzle",
+                phrase(
+                    language,
+                    "The Wiki Game result needs a valid time.",
+                    "Für das Wiki-Ergebnis ist eine gültige Zeit nötig.",
+                ),
+            )
+        route = store.wiki_route(day)
+        if route is None:
+            return Outcome(
+                "unverified",
+                phrase(
+                    language,
+                    "Today's Wiki Game route is unavailable. Try again before cutoff.",
+                    "Die heutige Wiki-Route ist nicht verfügbar. Versuche es vor Fristende erneut.",
+                ),
+            )
+        if route != result.puzzle:
+            return Outcome(
+                "wrong_puzzle",
+                phrase(
+                    language,
+                    "This Wiki Game route does not match today's puzzle.",
+                    "Diese Wiki-Route gehört nicht zum heutigen Rätsel.",
+                ),
+            )
     assigned = store.puzzle_for_day(config.guild_id, result.game, day)
     # A dated Size It Up Share identifies the day directly, even if an admin
     # assigned that day's numbered Share format through /puzzle_date.
@@ -89,13 +130,14 @@ def accept_result(
         user_id,
         display_name,
         result.game,
-        result.puzzle,
+        day.isoformat() if result.game == Game.WIKI else result.puzzle,
         day,
         result.score,
         result.solved,
         message_id,
         channel_id,
         submitted_at,
+        result.elapsed_seconds,
     )
     if store.insert(row):
         detail = (

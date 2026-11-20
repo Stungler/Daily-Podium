@@ -18,10 +18,11 @@ from dotenv import load_dotenv
 
 from .calendar import active_day, closes_at
 from .dashboard import STATIC, config_from_row, read_database, response_headers, submission_from_row
-from .models import Game, ServerConfig
+from .models import DEFAULT_GAMES, GAME_TITLES, Game, ServerConfig
 from .periods import period_snapshot, period_start
 from .presentation import game_snapshot, make_snapshot
 from .public_links import configure, ensure_key, read_config, server_slug
+from .rotation import Rotation
 from .service import requested_day
 from .streaks import (
     completed_day_anchor,
@@ -41,6 +42,7 @@ def safe_snapshot(snapshot: dict) -> dict:
         "timezone": snapshot["timezone"],
         "cutoff": snapshot["cutoff"],
         "scoring": snapshot["scoring"],
+        "lineup": snapshot.get("lineup", DEFAULT_GAMES),
         "rows": [
             {
                 "rank": row["rank"],
@@ -50,7 +52,8 @@ def safe_snapshot(snapshot: dict) -> dict:
                 "games": {
                     game.value: {
                         field: row["games"][game.value][field]
-                        for field in ("score", "solved", "points")
+                        for field in ("score", "solved", "points", "elapsed_seconds")
+                        if field in row["games"][game.value]
                     }
                     for game in Game
                     if game.value in row["games"]
@@ -62,12 +65,15 @@ def safe_snapshot(snapshot: dict) -> dict:
 
 
 def snapshot_for(db, cfg, day):
+    lineup = Rotation(db, cfg.guild_id).games_on(day)
     saved = db.execute(
         "SELECT snapshot FROM boards WHERE guild_id=? AND day=?", (cfg.guild_id, day.isoformat())
     ).fetchone()
     if saved:
         try:
-            return json.loads(saved["snapshot"]), True
+            snapshot = json.loads(saved["snapshot"])
+            snapshot.setdefault("lineup", list(lineup))
+            return snapshot, True
         except json.JSONDecodeError as exc:
             raise sqlite3.DatabaseError("Invalid saved board.") from exc
     rows = db.execute(
@@ -75,11 +81,12 @@ def snapshot_for(db, cfg, day):
         "ORDER BY submitted_at, message_id",
         (cfg.guild_id, day.isoformat()),
     )
-    return make_snapshot([submission_from_row(row) for row in rows], day, cfg), False
+    return make_snapshot([submission_from_row(row) for row in rows], day, cfg, lineup), False
 
 
 def global_snapshot(db, configs, day):
     """Earliest accepted submission per player/game/date, regardless of server."""
+    lineup = Rotation(db).games_on(day)
     active = {cfg.guild_id for cfg in configs if cfg.started_day <= day}
     frozen = {}
     for row in db.execute("SELECT guild_id, snapshot FROM boards WHERE day=?", (day.isoformat(),)):
@@ -98,13 +105,19 @@ def global_snapshot(db, configs, day):
         if row["guild_id"] not in active:
             continue
         result = submission_from_row(row)
+        if result.game not in lineup:
+            continue
         if result.guild_id in frozen:
             entry = frozen[result.guild_id].get((result.user_id, result.game.value))
             if entry is None:
                 continue
             name, saved = entry
             result = replace(
-                result, display_name=name, score=saved["score"], solved=saved["solved"]
+                result,
+                display_name=name,
+                score=saved["score"],
+                solved=saved["solved"],
+                elapsed_seconds=saved.get("elapsed_seconds"),
             )
         candidates.append(result)
     candidates.sort(
@@ -113,7 +126,7 @@ def global_snapshot(db, configs, day):
     unique = {}
     for result in candidates:
         unique.setdefault((result.user_id, result.game), result)
-    return make_snapshot(list(unique.values()), day, GLOBAL_RULES), bool(
+    return make_snapshot(list(unique.values()), day, GLOBAL_RULES, lineup), bool(
         active
     ) and active <= frozen.keys()
 
@@ -129,18 +142,23 @@ def global_streak_snapshots(db, configs, through):
         except json.JSONDecodeError as exc:
             raise sqlite3.DatabaseError("Invalid saved board.") from exc
     snapshots = []
+    rotation = Rotation(db)
     for day_text, saved in sorted(boards.items()):
         day = date.fromisoformat(day_text)
         active = {cfg.guild_id for cfg in configs if cfg.started_day <= day}
         if not active or not active <= saved.keys():
             continue
         players = {}
+        lineup = rotation.games_on(day)
         for guild_id in active:
             for row in saved[guild_id]["rows"]:
+                eligible = {game: row["games"][game] for game in lineup if game in row["games"]}
+                if not eligible:
+                    continue
                 player = players.setdefault(
                     row["user_id"], {"user_id": row["user_id"], "games": {}}
                 )
-                player["games"].update(row["games"])
+                player["games"].update(eligible)
         snapshots.append({"day": day_text, "rows": list(players.values())})
     return snapshots
 
@@ -198,7 +216,8 @@ def public_data(
         if not final:
             streak_boards.append(snapshot)
         anchor = selected_day if selected_day >= today else completed_day_anchor(selected_day)
-        summaries = streak_summaries(streak_boards, anchor)
+        rotation = Rotation(db, cfg.guild_id)
+        summaries = streak_summaries(streak_boards, anchor, rotation)
         period_board = None
         if period != "day":
             start = period_start(selected_day, period)
@@ -267,6 +286,12 @@ def public_data(
             "game": game,
             "period": period,
             "period_board": period_board,
+            "games": [{"id": item.value, "name": GAME_TITLES[item]} for item in Game],
+            "period_games": rotation.games_between(
+                max(cfg.started_day, period_start(selected_day, period)), selected_day
+            )
+            if period != "day" and selected_day >= cfg.started_day
+            else rotation.games_on(selected_day),
             "board": safe_snapshot(snapshot),
             "state": "final"
             if final
@@ -276,7 +301,7 @@ def public_data(
             "history": history,
             "rules": (
                 "First accepted submission per player, game, and recorded competition date "
-                "across all servers. "
+                "across all servers for games in the global lineup on that date. "
                 "Points are recalculated globally: 1 + players beaten. Today uses Europe/Berlin. "
                 "Final only when every participating server has frozen its board."
                 if scope == "global"

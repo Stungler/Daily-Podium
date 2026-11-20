@@ -5,6 +5,7 @@ import sqlite3
 from datetime import date, timedelta
 
 from .models import Game
+from .rotation import Rotation
 
 STREAK_DIGITS = ("0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣")
 
@@ -25,22 +26,36 @@ def streak_reactions(length: int) -> list[str]:
     return ["🔥", marker]
 
 
-def streak_lengths(days: set[date], as_of: date) -> dict[str, int]:
+def streak_lengths(
+    days: set[date], as_of: date, rotation: Rotation | None = None, game: Game | None = None
+) -> dict[str, int]:
     """Keep yesterday's run current while today's competition is still open."""
     relevant = sorted(day for day in days if day <= as_of)
     best = run = 0
     previous = None
+
+    def missed(after: date, before: date) -> bool:
+        if (before - after).days <= 1:
+            return False
+        if rotation is None or game is None:
+            return True
+        return rotation.includes_between(
+            game, after + timedelta(days=1), before - timedelta(days=1)
+        )
+
     for day in relevant:
         if day == previous:
             continue
-        run = run + 1 if previous and (day - previous).days == 1 else 1
+        run = run + 1 if previous and not missed(previous, day) else 1
         best = max(best, run)
         previous = day
-    current = run if previous and (as_of - previous).days <= 1 else 0
+    current = run if previous and not missed(previous, as_of) else 0
     return {"current": current, "best": best}
 
 
-def streak_summaries(snapshots: list[dict], as_of: date) -> dict[int, dict[str, dict[str, int]]]:
+def streak_summaries(
+    snapshots: list[dict], as_of: date, rotation: Rotation | None = None
+) -> dict[int, dict[str, dict[str, int]]]:
     """Summarize combined and per-game days from immutable or provisional boards."""
     days: dict[int, dict[str, set[date]]] = {}
     for snapshot in snapshots:
@@ -55,7 +70,9 @@ def streak_summaries(snapshots: list[dict], as_of: date) -> dict[int, dict[str, 
                     player.setdefault(game.value, set()).add(day)
     return {
         user_id: {
-            key: streak_lengths(player.get(key, set()), as_of)
+            key: streak_lengths(
+                player.get(key, set()), as_of, rotation, None if key == "all" else Game(key)
+            )
             for key in ("all", *(game.value for game in Game))
         }
         for user_id, player in days.items()

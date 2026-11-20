@@ -12,6 +12,9 @@ def scoring_label(language: str, mode: str) -> str:
 
 
 PARSER_ERRORS_DE = {
+    "The Wiki Game Daily: paste the complete Share result with steps and time.": (
+        "The Wiki Game Daily: Poste den vollständigen Teilen-Text mit Schritten und Zeit."
+    ),
     "TimeGuessr: expected '#puzzle — score/50,000'.": (
         "TimeGuessr: erwartet wird '#<Nummer> — <Punkte>/50,000' aus dem Teilen-Text."
     ),

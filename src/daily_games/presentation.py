@@ -3,11 +3,14 @@
 from datetime import date
 
 from .i18n import phrase
-from .models import Game, ServerConfig, Submission
+from .models import DEFAULT_GAMES, Game, ServerConfig, Submission
+from .rotation import Lineup
 from .scoring import leaderboard
 
 
-def make_snapshot(results: list[Submission], day: date, config: ServerConfig) -> dict:
+def make_snapshot(
+    results: list[Submission], day: date, config: ServerConfig, lineup: Lineup = DEFAULT_GAMES
+) -> dict:
     rows = []
     for player in leaderboard(results, config.scoring):
         scores = {}
@@ -18,6 +21,8 @@ def make_snapshot(results: list[Submission], day: date, config: ServerConfig) ->
                 "puzzle": result.puzzle,
                 "points": player.points[game],
             }
+            if game == Game.WIKI:
+                scores[game.value]["elapsed_seconds"] = result.elapsed_seconds
         rows.append(
             {
                 "rank": player.rank,
@@ -32,6 +37,7 @@ def make_snapshot(results: list[Submission], day: date, config: ServerConfig) ->
         "timezone": config.timezone,
         "cutoff": config.cutoff,
         "scoring": config.scoring,
+        "lineup": list(lineup),
         "rows": rows,
     }
 
@@ -52,15 +58,23 @@ def game_snapshot(snapshot: dict, game: Game) -> dict:
     return {**snapshot, "rows": rows}
 
 
+def raw_score_label(game: Game, result: dict, language: str = "en") -> str:
+    score = result["score"]
+    if game == Game.WIKI:
+        steps = phrase(language, "steps", "Schritte")
+        elapsed = result.get("elapsed_seconds")
+        if elapsed is None:
+            return f"{score} {steps}"
+        minutes, seconds = divmod(elapsed, 60)
+        return f"{score} {steps} · {minutes}:{seconds:02d}"
+    if game == Game.METAZOOA:
+        return phrase(language, f"{score} guesses", f"{score} Versuche")
+    return f"{score:,}"
+
+
 def score_label(game: Game, result: dict | None, language: str = "en") -> str:
     if result is None:
         return "—"
     if not result["solved"]:
         return phrase(language, "❌ Failed (+0)", "❌ Nicht geschafft (+0)")
-    score = result["score"]
-    label = (
-        phrase(language, f"{score} guesses", f"{score} Versuche")
-        if game == Game.METAZOOA
-        else f"{score:,}"
-    )
-    return f"{label} (+{result['points']})"
+    return f"{raw_score_label(game, result, language)} (+{result['points']})"

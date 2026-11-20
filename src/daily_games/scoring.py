@@ -20,6 +20,9 @@ def better(left: Submission, right: Submission) -> bool:
     if not left.solved:
         return False
     assert left.score is not None and right.score is not None
+    if left.game == Game.WIKI:
+        assert left.elapsed_seconds is not None and right.elapsed_seconds is not None
+        return (left.score, left.elapsed_seconds) < (right.score, right.elapsed_seconds)
     return left.score < right.score if left.game == Game.METAZOOA else left.score > right.score
 
 

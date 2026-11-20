@@ -7,18 +7,24 @@ class Game(StrEnum):
     TIMEGUESSR = "timeguessr"
     SIZE_IT_UP = "sizeitup"
     METAZOOA = "metazooa"
+    WIKI = "wikigame"
+
+
+DEFAULT_GAMES = (Game.TIMEGUESSR, Game.SIZE_IT_UP, Game.METAZOOA)
 
 
 GAME_TITLES = {
     Game.TIMEGUESSR: "TimeGuessr",
     Game.SIZE_IT_UP: "Size It Up",
     Game.METAZOOA: "Metazooa",
+    Game.WIKI: "The Wiki Game Daily",
 }
 
 GAME_URLS = {
     Game.TIMEGUESSR: "https://timeguessr.com/play?mode=daily",
     Game.SIZE_IT_UP: "https://magnitudle.com/size-it-up",
     Game.METAZOOA: "https://metazooa.com/play/daily",
+    Game.WIKI: "https://www.thewikigamedaily.com/",
 }
 
 
@@ -28,6 +34,7 @@ class ParsedResult:
     puzzle: str
     score: int | None
     solved: bool = True
+    elapsed_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -43,6 +50,7 @@ class Submission:
     message_id: int
     channel_id: int
     submitted_at: datetime
+    elapsed_seconds: int | None = None
 
 
 @dataclass(frozen=True)

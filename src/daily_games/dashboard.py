@@ -20,6 +20,7 @@ from .health import health_path, read_health
 from .models import GAME_TITLES, Game, ServerConfig, Submission
 from .periods import period_snapshot, period_start
 from .presentation import game_snapshot, make_snapshot
+from .rotation import Rotation
 from .service import requested_day
 from .streaks import completed_day_anchor, row_streak, server_streak_snapshots, streak_summaries
 
@@ -204,6 +205,7 @@ def submission_from_row(row: sqlite3.Row) -> Submission:
         row["message_id"],
         row["channel_id"],
         datetime.fromisoformat(row["submitted_at"]),
+        row["elapsed_seconds"] if "elapsed_seconds" in row.keys() else None,
     )
 
 
@@ -272,6 +274,8 @@ def read_data(
                     "effective_day": mode_row["effective_day"],
                 }
         selected_day = requested_day(day, now, cfg)
+        rotation = Rotation(db, cfg.guild_id)
+        lineup = rotation.games_on(selected_day)
         # These helpers add/subtract a day; exclude date extremes up front.
         if selected_day in {date.min, date.max}:
             raise ValueError("Choose a date between 0001-01-02 and 9999-12-30.")
@@ -290,7 +294,10 @@ def read_data(
             except json.JSONDecodeError as exc:
                 raise sqlite3.DatabaseError("Invalid frozen board.") from exc
         else:
-            snapshot = make_snapshot([submission_from_row(row) for row in rows], selected_day, cfg)
+            snapshot = make_snapshot(
+                [submission_from_row(row) for row in rows], selected_day, cfg, lineup
+            )
+        snapshot.setdefault("lineup", list(lineup))
         full_snapshot = snapshot
         if selected_game is not None:
             snapshot = game_snapshot(snapshot, selected_game)
@@ -298,7 +305,7 @@ def read_data(
         if not saved_board:
             streak_boards.append(full_snapshot)
         anchor = selected_day if selected_day >= today else completed_day_anchor(selected_day)
-        summaries = streak_summaries(streak_boards, anchor)
+        summaries = streak_summaries(streak_boards, anchor, rotation)
         period_board = None
         if period != "day":
             saved_days = db.execute(
@@ -355,7 +362,7 @@ def read_data(
             "SELECT * FROM boards WHERE guild_id=? ORDER BY day DESC LIMIT 30",
             (cfg.guild_id,),
         ).fetchall()
-        per_game = {item.value: 0 for item in Game}
+        per_game = {item.value: 0 for item in rotation.games_on(today)}
         per_game.update({row["game"]: row["count"] for row in counts})
         response["selected"] = {
             "server_id": str(cfg.guild_id),
@@ -382,6 +389,11 @@ def read_data(
             "game": game,
             "period": period,
             "period_board": period_board,
+            "period_games": rotation.games_between(
+                max(cfg.started_day, period_start(selected_day, period)), selected_day
+            )
+            if period != "day" and selected_day >= cfg.started_day
+            else lineup,
             "board": snapshot,
             "board_state": "final"
             if saved_board
@@ -394,6 +406,9 @@ def read_data(
                     "game": row["game"],
                     "score": row["score"],
                     "solved": bool(row["solved"]),
+                    "elapsed_seconds": row["elapsed_seconds"]
+                    if "elapsed_seconds" in row.keys()
+                    else None,
                     "day": row["day"],
                     "puzzle": row["puzzle"],
                     "submitted_at": row["submitted_at"],

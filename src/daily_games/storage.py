@@ -6,6 +6,8 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from .models import Game, ServerConfig, Submission
+from .rotation import Rotation, validate_lineup
+from .wiki_daily import route_key
 
 
 class Store:
@@ -44,6 +46,7 @@ class Store:
                 message_id INTEGER NOT NULL,
                 channel_id INTEGER NOT NULL,
                 submitted_at TEXT NOT NULL,
+                elapsed_seconds INTEGER,
                 voided INTEGER NOT NULL DEFAULT 0
             );
             CREATE UNIQUE INDEX IF NOT EXISTS submission_puzzle
@@ -97,6 +100,16 @@ class Store:
                 mode TEXT NOT NULL CHECK(mode IN ('channel', 'thread')),
                 PRIMARY KEY(guild_id, effective_day)
             );
+            CREATE TABLE IF NOT EXISTS game_rotations (
+                guild_id INTEGER NOT NULL,
+                effective_day TEXT NOT NULL,
+                games TEXT,
+                PRIMARY KEY (guild_id, effective_day)
+            );
+            CREATE TABLE IF NOT EXISTS wiki_routes (
+                day TEXT PRIMARY KEY,
+                route TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS audit (
                 id INTEGER PRIMARY KEY,
                 guild_id INTEGER NOT NULL,
@@ -131,6 +144,10 @@ class Store:
         self.db.execute("INSERT OR IGNORE INTO schema_version VALUES (4)")
         self.db.execute("INSERT OR IGNORE INTO schema_version VALUES (5)")
         self.db.execute("INSERT OR IGNORE INTO schema_version VALUES (6)")
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(submissions)")}
+        if "elapsed_seconds" not in columns:
+            self.db.execute("ALTER TABLE submissions ADD COLUMN elapsed_seconds INTEGER")
+        self.db.execute("INSERT OR IGNORE INTO schema_version VALUES (7)")
         self.db.commit()
 
     def close(self):
@@ -247,6 +264,40 @@ class Store:
             )
             self._audit(guild_id, actor_id, "result_mode", f"{mode} from {day}")
 
+    def rotation(self, guild_id: int = 0) -> Rotation:
+        return Rotation(self.db, guild_id)
+
+    def set_rotation(self, guild_id: int, day: date, games, actor_id: int):
+        if guild_id == 0 and games is None:
+            raise ValueError("The global lineup cannot inherit.")
+        payload = json.dumps(validate_lineup(games)) if games is not None else None
+        with self.db:
+            self.db.execute(
+                "INSERT INTO game_rotations VALUES (?,?,?) "
+                "ON CONFLICT(guild_id,effective_day) DO UPDATE SET games=excluded.games",
+                (guild_id, day.isoformat(), payload),
+            )
+            self._audit(guild_id, actor_id, "game_rotation", f"{day}: {payload or 'inherit'}")
+
+    def wiki_route(self, day: date) -> str | None:
+        row = self.db.execute("SELECT route FROM wiki_routes WHERE day=?", (day.isoformat(),))
+        item = row.fetchone()
+        return item[0] if item else None
+
+    def register_wiki_route(self, day: date, start: str, target: str, actor_id: int | None = None):
+        if not all(part.strip() and len(part) <= 300 for part in (start, target)):
+            raise ValueError("Provide two article titles of at most 300 characters each.")
+        key = route_key(start, target)
+        with self.db:
+            existing = self.wiki_route(day)
+            if existing is not None and existing != key:
+                raise ValueError("A different Wiki Game route is already registered for that day.")
+            self.db.execute(
+                "INSERT OR IGNORE INTO wiki_routes VALUES (?,?)", (day.isoformat(), key)
+            )
+            if actor_id is not None and existing is None:
+                self._audit(0, actor_id, "wiki_route", day.isoformat())
+
     def insert(self, result: Submission) -> bool:
         # A voided message must not resurrect when history is replayed.
         known = self.db.execute(
@@ -260,8 +311,8 @@ class Store:
                 """
                 INSERT OR IGNORE INTO submissions (
                     guild_id,user_id,display_name,game,puzzle,day,score,solved,message_id,
-                    channel_id,submitted_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    channel_id,submitted_at,elapsed_seconds
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             """,
                 (
                     result.guild_id,
@@ -275,6 +326,7 @@ class Store:
                     result.message_id,
                     result.channel_id,
                     result.submitted_at.isoformat(),
+                    result.elapsed_seconds,
                 ),
             )
         return cursor.rowcount == 1
@@ -298,6 +350,7 @@ class Store:
                 row["message_id"],
                 row["channel_id"],
                 datetime.fromisoformat(row["submitted_at"]),
+                row["elapsed_seconds"],
             )
             for row in rows
         ]

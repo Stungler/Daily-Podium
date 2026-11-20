@@ -5,6 +5,7 @@ from collections import defaultdict
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from time import monotonic
 from typing import Literal
 
 import discord
@@ -34,15 +35,17 @@ from .discord_views import (
 )
 from .health import HealthReporter
 from .i18n import command_error, parser_error, phrase, scoring_label
-from .models import GAME_TITLES, GAME_URLS, Game, ServerConfig
+from .models import DEFAULT_GAMES, GAME_TITLES, GAME_URLS, Game, ServerConfig
 from .parsers import parse_message
 from .periods import period_snapshot, period_start
 from .presentation import game_snapshot, make_snapshot, score_label
 from .public_links import leaderboard_links
+from .rotation import validate_lineup
 from .service import accept_result, requested_day
 from .storage import Store
 from .streaks import streak_lengths, streak_reactions
 from .timeguessr import current_daily_puzzle, next_reset
+from .wiki_daily import fetch_route
 
 log = logging.getLogger(__name__)
 ScoringMode = Literal["players_beaten", "placement"]
@@ -50,7 +53,13 @@ ResultMode = Literal["channel", "thread"]
 Language = Literal["en", "de"]
 AnnouncementStyle = Literal["standard", "compact"]
 NumberedGame = Literal["timeguessr", "sizeitup", "metazooa"]
-GameName = Literal["timeguessr", "sizeitup", "metazooa"]
+GameName = Literal["timeguessr", "sizeitup", "metazooa", "wikigame"]
+RotationAction = Literal["show", "set", "inherit"]
+GLOBAL_CALENDAR = ServerConfig(0, 0, 0, "Europe/Berlin", "00:00", "players_beaten", ANCHOR_DAY)
+
+
+def lineup_label(games) -> str:
+    return " · ".join(GAME_TITLES[game] for game in games)
 
 
 class CommandSyncError(RuntimeError):
@@ -80,7 +89,14 @@ def status_embed(
 ) -> discord.Embed:
     language = cfg.language
     expected = []
-    for game in Game:
+    lineup = store.rotation(cfg.guild_id).games_on(day)
+    for game in lineup:
+        if game == Game.WIKI:
+            expected.append(
+                f"{GAME_TITLES[game]}: "
+                f"[{phrase(language, 'Play daily', 'Tagesrätsel spielen')}](<{GAME_URLS[game]}>)"
+            )
+            continue
         override = store.puzzle_for_day(cfg.guild_id, game, day)
         puzzle = override or str(ANCHORS[game] + (day - ANCHOR_DAY).days)
         label = (
@@ -96,7 +112,9 @@ def status_embed(
             f"[{phrase(language, 'Play daily', 'Tagesrätsel spielen')}](<{GAME_URLS[game]}>)"
         )
     deadline = int(closes_at(day, cfg).timestamp())
-    if timeguessr_reset:
+    if Game.TIMEGUESSR not in lineup:
+        reset_note = ""
+    elif timeguessr_reset:
         reset_note = phrase(
             language,
             f"TimeGuessr's [live timer](https://timeguessr.com/finalscoredaily) says its next "
@@ -134,7 +152,7 @@ def status_embed(
             f"**{board_label}:** <#{board_destination}>\n"
             f"**{deadline_label}:** <t:{deadline}:f> (<t:{deadline}:R>)\n"
             + "\n".join(expected)
-            + f"\n\n{reset_note}"
+            + (f"\n\n{reset_note}" if reset_note else "")
         ),
     )
     embed.set_footer(
@@ -267,7 +285,15 @@ def board_embeds(
         else phrase(language, "Current standings · provisional", "Aktueller Stand · vorläufig")
     )
     title = "Daily Games"
-    games = [(Game.TIMEGUESSR, "TG"), (Game.SIZE_IT_UP, "Size"), (Game.METAZOOA, "Zoo")]
+    short_names = {
+        Game.TIMEGUESSR: "TG",
+        Game.SIZE_IT_UP: "Size",
+        Game.METAZOOA: "Zoo",
+        Game.WIKI: "Wiki",
+    }
+    games = [
+        (Game(item), short_names[Game(item)]) for item in snapshot.get("lineup", DEFAULT_GAMES)
+    ]
     if game is not None:
         snapshot = game_snapshot(snapshot, game)
         title = GAME_TITLES[game]
@@ -307,7 +333,8 @@ def board_embeds(
             name=phrase(language, "Competition rules", "Wettbewerbsregeln"),
             value=(
                 f"{snapshot['timezone']} · {cutoff_label} {snapshot['cutoff']} · {mode}\n"
-                "TG = TimeGuessr · Size = Size It Up · Zoo = Metazooa\n"
+                + " · ".join(f"{label} = {GAME_TITLES[item]}" for item, label in games)
+                + "\n"
                 + phrase(
                     language,
                     "Missing: — · Failed: 0 points · Ties share rank",
@@ -339,12 +366,36 @@ class DailyGamesBot(commands.Bot):
             allowed_mentions=discord.AllowedMentions.none(),
         )
         self.store = store
+        self.wiki_route_lock = asyncio.Lock()
+        self.wiki_retry: dict[date, float] = {}
         self.dev_guild_id = dev_guild_id
         self.guild_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.needs_recovery = {cfg.guild_id for cfg in store.configs()}
         self.tree.on_error = self.on_app_command_error
         database = store.db.execute("PRAGMA database_list").fetchone()[2]
         self.health = HealthReporter(Path(database)) if database else None
+
+    async def ensure_wiki_route(self, day: date):
+        if self.store.wiki_route(day) is not None:
+            return
+        async with self.wiki_route_lock:
+            now = monotonic()
+            self.wiki_retry = {key: due for key, due in self.wiki_retry.items() if due > now}
+            if self.store.wiki_route(day) is not None or day in self.wiki_retry:
+                return
+            route = await fetch_route(day)
+            if route is None:
+                self.wiki_retry[day] = monotonic() + 60
+                log.warning("Wiki Game route unavailable for %s", day)
+                return
+            if self.store.wiki_route(day) is None:
+                self.store.register_wiki_route(day, *route)
+
+    async def daily_reset(self, cfg: ServerConfig, day: date, now: datetime):
+        lineup = self.store.rotation(cfg.guild_id).games_on(day)
+        if Game.WIKI in lineup:
+            await self.ensure_wiki_route(day)
+        return await next_reset(now) if Game.TIMEGUESSR in lineup else None
 
     def report_health(self, **changes):
         if self.health is None:
@@ -537,6 +588,10 @@ class DailyGamesBot(commands.Bot):
                 )
             return
         accepted, rejected, accepted_games = [], [], []
+        lineup = self.store.rotation(cfg.guild_id).games_on(source_day)
+        if Game.WIKI in lineup and any(result.game == Game.WIKI for result in parsed):
+            if not self.store.board(cfg.guild_id, source_day):
+                await self.ensure_wiki_route(source_day)
         for result in parsed:
             outcome = accept_result(
                 self.store,
@@ -570,7 +625,10 @@ class DailyGamesBot(commands.Bot):
                 days = self.store.player_game_days(
                     cfg.guild_id, message.author.id, accepted_games[0], day
                 )
-                markers = streak_reactions(streak_lengths(days, day)["current"])
+                streak = streak_lengths(
+                    days, day, self.store.rotation(cfg.guild_id), accepted_games[0]
+                )
+                markers = streak_reactions(streak["current"])
             else:
                 # Several games can share a message. One set of reaction icons cannot
                 # associate separate numbers with each game, so show the fire only.
@@ -662,7 +720,10 @@ class DailyGamesBot(commands.Bot):
                         board = self.store.board(cfg.guild_id, day)
                         if board is None:
                             snapshot = make_snapshot(
-                                self.store.results(cfg.guild_id, day), day, cfg
+                                self.store.results(cfg.guild_id, day),
+                                day,
+                                cfg,
+                                self.store.rotation(cfg.guild_id).games_on(day),
                             )
                             self.store.freeze(cfg.guild_id, day, cfg.output_channel_id, snapshot)
                         await self.publish_locked(cfg, day, now)
@@ -890,7 +951,11 @@ class DailyGamesBot(commands.Bot):
             self.store.puzzle_for_day(cfg.guild_id, Game.TIMEGUESSR, day)
             or ANCHORS[Game.TIMEGUESSR] + (day - ANCHOR_DAY).days
         )
-        live_puzzle = await current_daily_puzzle()
+        live_puzzle = (
+            await current_daily_puzzle()
+            if Game.TIMEGUESSR in self.store.rotation(cfg.guild_id).games_on(day)
+            else None
+        )
         if (
             live_puzzle is not None
             and live_puzzle < expected_puzzle
@@ -905,7 +970,9 @@ class DailyGamesBot(commands.Bot):
                 expected_puzzle,
             )
             return
-        embed = status_embed(self.store, cfg, day, await next_reset(now), scheduled=True)
+        embed = status_embed(
+            self.store, cfg, day, await self.daily_reset(cfg, day, now), scheduled=True
+        )
         if not prompt["attempted_at"]:
             self.store.mark_prompt_attempt(cfg.guild_id, day, now)
         message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
@@ -1029,7 +1096,11 @@ class DailyGamesBot(commands.Bot):
             self.store.puzzle_for_day(cfg.guild_id, Game.TIMEGUESSR, day)
             or ANCHORS[Game.TIMEGUESSR] + (day - ANCHOR_DAY).days
         )
-        live_puzzle = await current_daily_puzzle()
+        live_puzzle = (
+            await current_daily_puzzle()
+            if Game.TIMEGUESSR in self.store.rotation(cfg.guild_id).games_on(day)
+            else None
+        )
         if (
             live_puzzle is not None
             and live_puzzle < expected_puzzle
@@ -1040,7 +1111,7 @@ class DailyGamesBot(commands.Bot):
             self.store,
             presentation_cfg,
             day,
-            await next_reset(now),
+            await self.daily_reset(cfg, day, now),
             scheduled=True,
             thread_id=thread.id,
         )
@@ -1304,7 +1375,8 @@ class CompetitionCommands(commands.Cog):
                 "`!monthly [day] [game]` · monthly points from finalized days\n"
                 "`!stats [@player]` · personal stats and streaks from finalized days\n"
                 "`/myday` · your accepted games and streaks, privately\n"
-                "`!games` · play links · `!status` · puzzles and deadline\n"
+                "`!games [day]` · play links · `!status [day]` · puzzles and deadline\n"
+                "`!rotation` · active games and the next change\n"
                 "`/result_mode` · admin switch between channel and thread mode\n"
                 "`!language de|en` · server language (admin)\n"
                 "`!announcement_style compact|standard` · posting style (admin)\n"
@@ -1318,7 +1390,8 @@ class CompetitionCommands(commands.Cog):
                 "`!monthly [day] [game]` · Monatspunkte abgeschlossener Tage\n"
                 "`!stats [@player]` · persönliche Statistik und Serien\n"
                 "`/myday` · deine heutigen Ergebnisse, privat\n"
-                "`!games` · Spiellinks · `!status` · Rätsel und Frist\n"
+                "`!games [day]` · Spiellinks · `!status [day]` · Rätsel und Frist\n"
+                "`!rotation` · aktive Spiele und nächste Änderung\n"
                 "`!result_mode` · zwischen Kanal und Thread wechseln (Admin)\n"
                 "`!language de|en` · Sprache einstellen (Admin)\n"
                 "`!announcement_style compact|standard` · Posting-Stil (Admin)\n"
@@ -1360,13 +1433,20 @@ class CompetitionCommands(commands.Cog):
         await ctx.send(embed=embed, ephemeral=True)
 
     @commands.hybrid_command(name="games", description="Links to the three daily games.")
-    async def games(self, ctx: commands.Context):
+    async def games(self, ctx: commands.Context, day: str = "today"):
+        cfg = self.bot.store.config(ctx.guild.id) if ctx.guild else None
         language = self.language_for(ctx)
+        lineup = DEFAULT_GAMES
+        if cfg:
+            selected = requested_day(day, datetime.now(UTC), cfg)
+            lineup = self.bot.store.rotation(cfg.guild_id).games_on(selected)
         await ctx.send(
             embed=discord.Embed(
                 title=phrase(language, "Today's games", "Heutige Spiele"),
                 color=MAUVE,
-                description=" · ".join(f"[{GAME_TITLES[game]}]({GAME_URLS[game]})" for game in Game)
+                description=" · ".join(
+                    f"[{GAME_TITLES[game]}]({GAME_URLS[game]})" for game in lineup
+                )
                 + phrase(
                     language,
                     "\nPlay, then paste your **Share** result in the results channel.",
@@ -1386,7 +1466,9 @@ class CompetitionCommands(commands.Cog):
             return
         language = cfg.language
         today = active_day(datetime.now(UTC), cfg)
-        snapshot = make_snapshot(self.bot.store.results(cfg.guild_id, today), today, cfg)
+        rotation = self.bot.store.rotation(cfg.guild_id)
+        lineup = rotation.games_on(today)
+        snapshot = make_snapshot(self.bot.store.results(cfg.guild_id, today), today, cfg, lineup)
         player = next(
             (row for row in snapshot["rows"] if row["user_id"] == interaction.user.id), None
         )
@@ -1401,18 +1483,18 @@ class CompetitionCommands(commands.Cog):
             title=f"{phrase(language, 'Your games', 'Deine Spiele')} · {today}",
             description=phrase(
                 language,
-                f"**{len(results)}/3 accepted** · deadline <t:{deadline}:R>\n"
+                f"**{len(results)}/{len(lineup)} accepted** · deadline <t:{deadline}:R>\n"
                 f"🔥 Any-game streak: **{overall['current']}** current / "
                 f"**{overall['best']}** best\n"
                 "Points are provisional until the daily board is finalized.",
-                f"**{len(results)}/3 angenommen** · Frist <t:{deadline}:R>\n"
+                f"**{len(results)}/{len(lineup)} angenommen** · Frist <t:{deadline}:R>\n"
                 f"🔥 Spielübergreifende Serie: **{overall['current']}** aktuell / "
                 f"**{overall['best']}** Rekord\n"
                 "Punkte bleiben vorläufig, bis die Tageswertung abgeschlossen ist.",
             ),
             color=MAUVE,
         )
-        for game in Game:
+        for game in lineup:
             result = results.get(game.value)
             status = (
                 phrase(language, "✅ Recorded", "✅ Gespeichert")
@@ -1421,7 +1503,7 @@ class CompetitionCommands(commands.Cog):
                 else phrase(language, "— Missing", "— Fehlt")
                 + f" · [{phrase(language, 'Play daily', 'Tagesrätsel spielen')}]({GAME_URLS[game]})"
             )
-            streak = streak_lengths(game_days[game], today)
+            streak = streak_lengths(game_days[game], today, rotation, game)
             embed.add_field(
                 name=GAME_TITLES[game],
                 value=phrase(
@@ -1607,6 +1689,151 @@ class CompetitionCommands(commands.Cog):
         )
 
     @commands.hybrid_command(
+        name="rotation", description="View the game lineup or schedule a server override."
+    )
+    @commands.guild_only()
+    async def rotation(
+        self,
+        ctx: commands.Context,
+        action: RotationAction = "show",
+        game1: GameName | None = None,
+        game2: GameName | None = None,
+        game3: GameName | None = None,
+    ):
+        cfg = self.config(ctx)
+        language = cfg.language
+        store = self.bot.store
+        values = (game1, game2, game3)
+        if action == "set":
+            try:
+                lineup = validate_lineup(value for value in values if value is not None)
+            except ValueError as exc:
+                raise commands.BadArgument(
+                    phrase(
+                        language,
+                        "Choose exactly three distinct supported games.",
+                        "Wähle genau drei unterschiedliche unterstützte Spiele.",
+                    )
+                ) from exc
+        else:
+            lineup = None
+            if any(value is not None for value in values):
+                raise commands.BadArgument(
+                    phrase(
+                        language,
+                        "Only set takes game names.",
+                        "Nur set erwartet Spielnamen.",
+                    )
+                )
+        if action != "show":
+            if not ctx.author.guild_permissions.manage_guild:
+                raise commands.BadArgument(
+                    phrase(
+                        language,
+                        "Changing the lineup requires Manage Server.",
+                        "Zum Ändern der Rotation brauchst du „Server verwalten“.",
+                    )
+                )
+            async with self.bot.guild_locks[cfg.guild_id]:
+                effective = active_day(datetime.now(UTC), cfg) + timedelta(days=1)
+                store.set_rotation(cfg.guild_id, effective, lineup, ctx.author.id)
+            rotation = store.rotation(cfg.guild_id)
+            games = lineup_label(rotation.games_on(effective))
+            await ctx.send(
+                phrase(
+                    language,
+                    f"Lineup from {effective}: {games}.",
+                    f"Rotation ab {effective}: {games}.",
+                ),
+                ephemeral=True,
+            )
+            return
+
+        today = active_day(datetime.now(UTC), cfg)
+        rotation = store.rotation(cfg.guild_id)
+        games = lineup_label(rotation.games_on(today))
+        source = (
+            phrase(language, "global default", "globale Vorgabe")
+            if rotation.inherits_on(today)
+            else phrase(language, "server override", "Server-Auswahl")
+        )
+        message = phrase(
+            language,
+            f"Current lineup ({source}): {games}",
+            f"Aktuelle Rotation ({source}): {games}",
+        )
+        upcoming = rotation.next_change(today)
+        if upcoming:
+            games = lineup_label(rotation.games_on(upcoming))
+            message += phrase(language, f"\nFrom {upcoming}: {games}", f"\nAb {upcoming}: {games}")
+        else:
+            message += phrase(language, "\nNo change scheduled.", "\nKeine Änderung geplant.")
+        await ctx.send(message, ephemeral=True)
+
+    @commands.hybrid_command(
+        name="rotation_global", description="Schedule the global game lineup as bot owner."
+    )
+    @commands.guild_only()
+    @commands.is_owner()
+    async def rotation_global(
+        self,
+        ctx: commands.Context,
+        action: Literal["set"],
+        game1: GameName,
+        game2: GameName,
+        game3: GameName,
+    ):
+        language = self.language_for(ctx)
+        try:
+            lineup = validate_lineup((game1, game2, game3))
+        except ValueError as exc:
+            raise commands.BadArgument(
+                phrase(
+                    language,
+                    "Choose exactly three distinct supported games.",
+                    "Wähle genau drei unterschiedliche unterstützte Spiele.",
+                )
+            ) from exc
+        store = self.bot.store
+        now = datetime.now(UTC)
+        calendars = [GLOBAL_CALENDAR, *store.configs()]
+        effective = max(active_day(now, cfg) for cfg in calendars) + timedelta(days=1)
+        store.set_rotation(0, effective, lineup, ctx.author.id)
+        games = lineup_label(lineup)
+        await ctx.send(
+            phrase(
+                language,
+                f"Global lineup from {effective}: {games}.",
+                f"Globale Rotation ab {effective}: {games}.",
+            ),
+            ephemeral=True,
+        )
+
+    @commands.hybrid_command(name="wiki_route", description="Register a dated Wiki Game route.")
+    @commands.guild_only()
+    @commands.is_owner()
+    async def wiki_route(self, ctx: commands.Context, day: str, start: str, target: str):
+        language = self.language_for(ctx)
+        try:
+            selected = date.fromisoformat(day)
+            self.bot.store.register_wiki_route(selected, start, target, ctx.author.id)
+        except ValueError as exc:
+            if language == "de":
+                raise commands.BadArgument(
+                    "Prüfe Datum und Artikelnamen. "
+                    "Eine gespeicherte Route kann nicht ersetzt werden."
+                ) from exc
+            raise commands.BadArgument(str(exc)) from exc
+        await ctx.send(
+            phrase(
+                language,
+                f"Wiki Game route registered for {selected}.",
+                f"Wiki-Route für den {selected} gespeichert.",
+            ),
+            ephemeral=True,
+        )
+
+    @commands.hybrid_command(
         name="language", description="Choose English or German for this server."
     )
     @commands.guild_only()
@@ -1670,8 +1897,8 @@ class CompetitionCommands(commands.Cog):
             raise commands.BadArgument(
                 phrase(
                     self.language_for(ctx),
-                    "Choose all, timeguessr, sizeitup, or metazooa for the game.",
-                    "Wähle all, timeguessr, sizeitup oder metazooa als Spiel.",
+                    "Choose all, timeguessr, sizeitup, metazooa, or wikigame.",
+                    "Wähle all, timeguessr, sizeitup, metazooa oder wikigame.",
                 )
             ) from exc
         cfg = self.config(ctx)
@@ -1684,7 +1911,10 @@ class CompetitionCommands(commands.Cog):
                 snapshot = json.loads(board["snapshot"])
             else:
                 snapshot = make_snapshot(
-                    self.bot.store.results(cfg.guild_id, selected), selected, cfg
+                    self.bot.store.results(cfg.guild_id, selected),
+                    selected,
+                    cfg,
+                    self.bot.store.rotation(cfg.guild_id).games_on(selected),
                 )
         final = board is not None
         if not final and selected < active_day(datetime.now(UTC), cfg):
@@ -1766,8 +1996,8 @@ class CompetitionCommands(commands.Cog):
             raise commands.BadArgument(
                 phrase(
                     self.language_for(ctx),
-                    "Choose all, timeguessr, sizeitup, or metazooa for the game.",
-                    "Wähle all, timeguessr, sizeitup oder metazooa als Spiel.",
+                    "Choose all, timeguessr, sizeitup, metazooa, or wikigame.",
+                    "Wähle all, timeguessr, sizeitup, metazooa oder wikigame.",
                 )
             ) from exc
         cfg = self.config(ctx)
@@ -1792,7 +2022,12 @@ class CompetitionCommands(commands.Cog):
         cfg = self.config(ctx)
         target = member or ctx.author
         snapshots = self.bot.store.finalized_snapshots(cfg.guild_id, cfg.started_day, date.max)
-        stats = player_stats_snapshot(snapshots, target.id, active_day(datetime.now(UTC), cfg))
+        stats = player_stats_snapshot(
+            snapshots,
+            target.id,
+            active_day(datetime.now(UTC), cfg),
+            self.bot.store.rotation(cfg.guild_id),
+        )
         await ctx.send(embed=player_stats_embed(stats, target.display_name, cfg.language))
 
     @commands.hybrid_command(
@@ -1800,13 +2035,15 @@ class CompetitionCommands(commands.Cog):
         description="Show this server's settings, daily challenge links and deadline.",
     )
     @commands.guild_only()
-    async def status(self, ctx: commands.Context):
+    async def status(self, ctx: commands.Context, day: str = "today"):
         cfg = self.config(ctx)
-        today = active_day(datetime.now(UTC), cfg)
-        prompt = self.bot.store.prompt(cfg.guild_id, today)
+        now = datetime.now(UTC)
+        today = active_day(now, cfg)
+        selected = requested_day(day, now, cfg)
+        prompt = self.bot.store.prompt(cfg.guild_id, selected)
         thread_id = (
             prompt["thread_id"]
-            if self.bot.store.mode_for_day(cfg.guild_id, today) == "thread" and prompt
+            if self.bot.store.mode_for_day(cfg.guild_id, selected) == "thread" and prompt
             else None
         )
         presentation_cfg = (
@@ -1817,8 +2054,8 @@ class CompetitionCommands(commands.Cog):
         embed = status_embed(
             self.bot.store,
             presentation_cfg,
-            today,
-            await next_reset(datetime.now(UTC)),
+            selected,
+            await self.bot.daily_reset(cfg, selected, now) if selected == today else None,
             thread_id=thread_id,
         )
         await ctx.send(embed=embed, ephemeral=True)

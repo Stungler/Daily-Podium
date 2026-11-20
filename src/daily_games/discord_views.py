@@ -6,9 +6,10 @@ from datetime import date
 import discord
 
 from .i18n import phrase, scoring_label
-from .models import GAME_TITLES, Game
+from .models import DEFAULT_GAMES, GAME_TITLES, Game
 from .periods import period_snapshot
-from .presentation import game_snapshot, score_label
+from .presentation import game_snapshot, raw_score_label, score_label
+from .rotation import Rotation
 from .streaks import completed_day_anchor, streak_summaries
 
 MAUVE = 0xCBA6F7
@@ -58,17 +59,24 @@ def compact_boards(snapshot, *, final, game=None, limit=None, scheduled=False, l
             if game == Game.METAZOOA
             else phrase(language, "Score", "Punkte")
         )
-        header += f" {score_heading:>10}"
+        if game == Game.WIKI:
+            score_heading = phrase(language, "Steps · Time", "Schritte · Zeit")
+        width = 26 if game == Game.WIKI else 10
+        header += f" {score_heading:>{width}}"
     for row in rows:
         line = f"{row['rank']:>3} {name_column(row['name'])} {row['total']:>4}"
         if game:
             result = row["games"][game.value]
             raw = (
-                f"{result['score']:,}"
+                (
+                    raw_score_label(game, result, language)
+                    if game == Game.WIKI
+                    else f"{result['score']:,}"
+                )
                 if result["solved"]
                 else phrase(language, "Failed", "Fehlversuch")
             )
-            line += f" {raw:>10}"
+            line += f" {raw:>{width}}"
         lines.append(f"`{line}`")
     pages = [lines[index : index + 15] for index in range(0, len(lines), 15)] or [[]]
     embeds = []
@@ -129,7 +137,7 @@ def daily_highlights(snapshot, language="en"):
         title=f"{phrase(language, 'Game highlights', 'Spiel-Highlights')} · {snapshot['day']}",
         color=MAUVE,
     )
-    for game in Game:
+    for game in map(Game, snapshot.get("lineup", DEFAULT_GAMES)):
         rows = game_snapshot(snapshot, game)["rows"]
         solved = [row for row in rows if row["games"][game.value]["solved"]]
         if solved:
@@ -220,7 +228,12 @@ def period_embed(summary, language="en"):
     return embed
 
 
-def player_stats_snapshot(snapshots: list[dict], user_id: int, as_of: date | None = None) -> dict:
+def player_stats_snapshot(
+    snapshots: list[dict],
+    user_id: int,
+    as_of: date | None = None,
+    rotation: Rotation | None = None,
+) -> dict:
     """Summarize one player's finalized results in one Discord server."""
     games = {
         game.value: {"played": 0, "solved": 0, "wins": 0, "points": 0, "score_sum": 0, "best": None}
@@ -256,6 +269,14 @@ def player_stats_snapshot(snapshots: list[dict], user_id: int, as_of: date | Non
             game_stats["score_sum"] += score
             best = game_stats["best"]
             better_score = best is None or (score < best if game == Game.METAZOOA else score > best)
+            if game == Game.WIKI:
+                elapsed = entry["elapsed_seconds"]
+                better_score = best is None or (score, elapsed) < (
+                    best,
+                    game_stats["best_elapsed_seconds"],
+                )
+                if better_score:
+                    game_stats["best_elapsed_seconds"] = elapsed
             if better_score:
                 game_stats["best"] = score
             projected = game_snapshot(snapshot, game)
@@ -267,7 +288,7 @@ def player_stats_snapshot(snapshots: list[dict], user_id: int, as_of: date | Non
         if snapshots
         else date.min
     )
-    streaks = streak_summaries(snapshots, anchor).get(user_id, {})
+    streaks = streak_summaries(snapshots, anchor, rotation).get(user_id, {})
     result["streak"] = streaks.get("all", {"current": 0, "best": 0})
     for game in Game:
         games[game.value]["streak"] = streaks.get(game.value, {"current": 0, "best": 0})
@@ -307,6 +328,8 @@ def player_stats_embed(stats: dict, display_name: str, language="en") -> discord
     )
     for game in Game:
         data = stats["games"][game.value]
+        if game == Game.WIKI and not data["played"]:
+            continue
         if not data["played"]:
             value = phrase(
                 language, "No finalized results yet.", "Noch keine abgeschlossenen Ergebnisse."
@@ -316,6 +339,14 @@ def player_stats_embed(stats: dict, display_name: str, language="en") -> discord
                 unit = phrase(language, " guesses", " Versuche") if game == Game.METAZOOA else ""
                 average = f"{data['score_sum'] / data['solved']:,.1f}{unit}"
                 best = f"{data['best']:,}{unit}"
+                if game == Game.WIKI:
+                    unit = phrase(language, " steps", " Schritte")
+                    average = f"{data['score_sum'] / data['solved']:,.1f}{unit}"
+                    best = raw_score_label(
+                        game,
+                        {"score": data["best"], "elapsed_seconds": data["best_elapsed_seconds"]},
+                        language,
+                    )
             else:
                 average = best = "—"
             value = phrase(

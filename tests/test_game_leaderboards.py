@@ -149,6 +149,7 @@ async def test_slash_game_choices_and_invalid_prefix_game(store):
             "timeguessr",
             "sizeitup",
             "metazooa",
+            "wikigame",
         }
         cog = bot.get_cog("CompetitionCommands")
         with pytest.raises(commands.BadArgument, match="Choose all"):

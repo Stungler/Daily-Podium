@@ -5,6 +5,7 @@ import unicodedata
 from datetime import date
 
 from .models import Game, ParsedResult
+from .wiki_daily import route_key
 
 
 class ParseError(ValueError):
@@ -17,6 +18,14 @@ HEADER = re.compile(
     r"Animal\s*#)"
 )
 INTEGER = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
+WIKI_SHARE = re.compile(
+    r"(?P<start>[^\n]{1,300}?)\s+➡️?\s+(?P<target>[^\n]{1,300}?)\s+"
+    r"⏰\s*(?P<time>[0-9]{1,4}(?::[0-9]{2}){1,2})\s+"
+    r"🦶\s*(?P<steps>[0-9]{1,5})(?:\s+\([^\n]*\))?\s+🔗\s*"
+    r"<?https://(?:www\.)?thewikigamedaily\.com/?>?",
+    re.IGNORECASE,
+)
+WIKI_ERROR = "The Wiki Game Daily: paste the complete Share result with steps and time."
 
 
 def _number(value: str) -> int:
@@ -85,8 +94,32 @@ def _metazooa(text: str) -> ParsedResult:
 def parse_message(content: str) -> tuple[list[ParsedResult], list[str]]:
     """Return supported results and errors; ordinary chat yields two empty lists."""
     content = unicodedata.normalize("NFC", content).replace("\r\n", "\n")
-    headers = list(HEADER.finditer(content))
     results, errors = [], []
+    other_lines = []
+    for line in content.split("\n"):
+        if "⏰" not in line or "thewikigamedaily.com" not in line.lower():
+            other_lines.append(line)
+            continue
+        match = WIKI_SHARE.fullmatch(line.strip().strip("`").strip())
+        if match is None:
+            errors.append(WIKI_ERROR)
+            continue
+        parts = [int(piece) for piece in match["time"].split(":")]
+        steps = int(match["steps"])
+        if not steps or any(part >= 60 for part in parts[1:]):
+            errors.append(WIKI_ERROR)
+            continue
+        elapsed = sum(part * 60**index for index, part in enumerate(reversed(parts)))
+        results.append(
+            ParsedResult(
+                Game.WIKI,
+                route_key(match["start"], match["target"]),
+                steps,
+                elapsed_seconds=elapsed,
+            )
+        )
+    content = "\n".join(other_lines)
+    headers = list(HEADER.finditer(content))
     for index, header in enumerate(headers):
         end = headers[index + 1].start() if index + 1 < len(headers) else len(content)
         block = content[header.start() : end].strip().strip("`").strip()
