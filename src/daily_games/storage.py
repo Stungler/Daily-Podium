@@ -298,13 +298,20 @@ class Store:
             if actor_id is not None and existing is None:
                 self._audit(0, actor_id, "wiki_route", day.isoformat())
 
+    def submission_for_message(
+        self, guild_id: int, user_id: int, game: Game, message_id: int
+    ) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT day, solved, voided FROM submissions "
+            "WHERE guild_id=? AND user_id=? AND game=? AND message_id=?",
+            (guild_id, user_id, game.value, message_id),
+        ).fetchone()
+
     def insert(self, result: Submission) -> bool:
         # A voided message must not resurrect when history is replayed.
-        known = self.db.execute(
-            "SELECT 1 FROM submissions WHERE guild_id=? AND user_id=? AND game=? AND message_id=?",
-            (result.guild_id, result.user_id, result.game.value, result.message_id),
-        ).fetchone()
-        if known:
+        if self.submission_for_message(
+            result.guild_id, result.user_id, result.game, result.message_id
+        ):
             return False
         with self.db:
             cursor = self.db.execute(

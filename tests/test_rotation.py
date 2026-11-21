@@ -73,7 +73,7 @@ def test_wiki_share_boundary_and_route_validation(store, config):
     store.register_wiki_route(DAY, "Poet", "Pluto")
     assert submit(store, config, SHARE.replace("Pluto", "Neptune")).status == "wrong_puzzle"
     assert submit(store, config, SHARE).status == "accepted"
-    assert submit(store, config, SHARE).status == "duplicate"
+    assert submit(store, config, SHARE).status == "recorded"
     row = store.results(config.guild_id, DAY)[0]
     assert (row.puzzle, row.score, row.elapsed_seconds) == (DAY.isoformat(), 3, 195)
     assert parse_message(SHARE.replace("03:15", "03:80"))[1]

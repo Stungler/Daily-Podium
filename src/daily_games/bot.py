@@ -587,7 +587,8 @@ class DailyGamesBot(commands.Bot):
                     mention_author=False,
                 )
             return
-        accepted, rejected, accepted_games = [], [], []
+        accepted, rejected = [], []
+        accepted_games = set()
         lineup = self.store.rotation(cfg.guild_id).games_on(source_day)
         if Game.WIKI in lineup and any(result.game == Game.WIKI for result in parsed):
             if not self.store.board(cfg.guild_id, source_day):
@@ -606,9 +607,10 @@ class DailyGamesBot(commands.Bot):
                 language=cfg.language,
             )
             label = GAME_TITLES[result.game]
-            if outcome.status == "accepted":
-                accepted.append(f"{label}: {outcome.detail}")
-                accepted_games.append(result.game)
+            if outcome.status in ("accepted", "recorded"):
+                if result.game not in accepted_games:
+                    accepted.append(f"{label}: {outcome.detail}")
+                    accepted_games.add(result.game)
             elif outcome.status != "ignored":
                 rejected.append(f"{label}: {outcome.detail}")
         if not feedback:
@@ -622,12 +624,9 @@ class DailyGamesBot(commands.Bot):
         if accepted and acknowledged:
             if len(accepted_games) == 1:
                 day = active_day(message.created_at, cfg)
-                days = self.store.player_game_days(
-                    cfg.guild_id, message.author.id, accepted_games[0], day
-                )
-                streak = streak_lengths(
-                    days, day, self.store.rotation(cfg.guild_id), accepted_games[0]
-                )
+                (game,) = accepted_games
+                days = self.store.player_game_days(cfg.guild_id, message.author.id, game, day)
+                streak = streak_lengths(days, day, self.store.rotation(cfg.guild_id), game)
                 markers = streak_reactions(streak["current"])
             else:
                 # Several games can share a message. One set of reaction icons cannot

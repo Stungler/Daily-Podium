@@ -7,6 +7,7 @@ import pytest
 
 from daily_games.bot import CompetitionCommands, DailyGamesBot, compact_announcement_embed
 from daily_games.calendar import active_day
+from daily_games.models import Game
 from daily_games.presentation import make_snapshot
 
 from .conftest import TIMEGUESSR
@@ -451,6 +452,62 @@ async def test_live_thread_message_recovers_earlier_thread_result(thread_server,
     assert store.prompt(config.guild_id, DAY)["thread_cursor"] == current.id
     first.add_reaction.assert_not_awaited()
     current.add_reaction.assert_any_await("✅")
+
+
+@pytest.mark.parametrize(
+    ("game", "share", "score"),
+    [
+        (Game.SIZE_IT_UP, "Size It Up\n#103\n\nScore: 273/500", 273),
+        (
+            Game.WIKI,
+            "Thomas Edison ➡️ McDonald's ⏰ 02:10 🦶5 🔗 https://www.thewikigamedaily.com/",
+            5,
+        ),
+    ],
+)
+async def test_thread_live_acknowledges_original_post_already_saved_by_recovery(
+    thread_server, store, config, game, share, score
+):
+    bot = thread_server.bot
+    day = date(2026, 11, 20)
+    store.set_result_mode(config.guild_id, day, "thread", actor_id=1)
+    store.set_rotation(0, day, (Game.TIMEGUESSR, Game.SIZE_IT_UP, Game.WIKI), actor_id=1)
+    store.register_wiki_route(day, "Thomas Edison", "McDonald's")
+    await bot.publish_thread_prompt_locked(config, day, datetime(2026, 11, 20, 0, tzinfo=UTC))
+    thread_id = store.prompt(config.guild_id, day)["thread_id"]
+    thread = thread_server.state.threads[thread_id]
+    when = datetime(2026, 11, 20, 15, tzinfo=UTC)
+    snowflake = discord.utils.time_snowflake(when)
+    bot.process_commands = AsyncMock()
+
+    def make_post(offset, player):
+        post = incoming(config, when, share, snowflake + offset)
+        post.channel, post.guild = thread, thread_server.guild
+        post.author.id = player
+        thread_server.state.thread_messages[thread_id].append(post)
+        return post
+
+    first = make_post(1, 7)
+    await bot.on_message(first)
+    first.add_reaction.assert_any_await("✅")
+
+    second = make_post(2, 8)
+    # The scheduled history scan sees the post before its live event takes the lock.
+    async with bot.guild_locks[config.guild_id]:
+        await bot.recover_locked(config)
+    second.add_reaction.assert_not_awaited()
+    await bot.on_message(second)
+    assert [call.args[0] for call in second.add_reaction.await_args_list] == ["✅", "🔥", "1️⃣"]
+    second.reply.assert_not_awaited()
+
+    repost = make_post(3, 8)
+    await bot.on_message(repost)
+    repost.add_reaction.assert_awaited_once_with("⚠️")
+    assert "already submitted" in repost.reply.await_args.args[0]
+    assert {row.user_id: (row.game, row.score) for row in store.results(config.guild_id, day)} == {
+        7: (game, score),
+        8: (game, score),
+    }
 
 
 async def test_final_details_use_results_thread(thread_server, store, config):

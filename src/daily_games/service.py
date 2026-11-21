@@ -13,6 +13,16 @@ class Outcome:
     detail: str
 
 
+def recorded_detail(language: str, day: date | str, solved: bool) -> str:
+    if solved:
+        return phrase(language, f"Recorded for {day}.", f"Für den {day} gespeichert.")
+    return phrase(
+        language,
+        f"Failure recorded for {day}: 0 points.",
+        f"Fehlversuch für den {day} gespeichert: 0 Punkte.",
+    )
+
+
 def accept_result(
     store: Store,
     config: ServerConfig,
@@ -36,6 +46,10 @@ def accept_result(
                 "Ergebnisse gehören in den eingestellten Ergebniskanal dieses Servers.",
             ),
         )
+    prior = store.submission_for_message(config.guild_id, user_id, result.game, message_id)
+    if prior is not None and not prior["voided"]:
+        # History recovery can save this exact message before its live event is handled.
+        return Outcome("recorded", recorded_detail(language, prior["day"], bool(prior["solved"])))
     expected = active_day(submitted_at, config)
     if result.game not in store.rotation(config.guild_id).games_on(expected):
         return Outcome(
@@ -140,16 +154,7 @@ def accept_result(
         result.elapsed_seconds,
     )
     if store.insert(row):
-        detail = (
-            phrase(language, f"Recorded for {day}.", f"Für den {day} gespeichert.")
-            if result.solved
-            else phrase(
-                language,
-                f"Failure recorded for {day}: 0 points.",
-                f"Fehlversuch für den {day} gespeichert: 0 Punkte.",
-            )
-        )
-        return Outcome("accepted", detail)
+        return Outcome("accepted", recorded_detail(language, day, result.solved))
     return Outcome(
         "duplicate",
         phrase(
