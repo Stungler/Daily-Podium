@@ -116,19 +116,22 @@ because Discord history no longer contains their original content.
 The bot's `daily_tick` runs every 30 seconds. For a midnight cutoff in
 `Europe/Berlin`, the sequence is:
 
-1. In thread mode, at the **00:00** cutoff, create and pin today's parent prompt and
-   its public results thread. The previous bot-owned daily pin is removed. Early
+1. In thread mode, at the **00:00** cutoff, create today's parent prompt and its
+   public results thread. Pin the prompt in the parent channel and one guide
+   with links and submission instructions in the thread. Remove the previous
+   bot-owned parent pin. Early
    parent-channel messages posted while the bot was offline are still recovered.
 2. At or after **00:05**, recover missed results and freeze yesterday's board. Standard
    style posts the compact final embed in the configured board channel. Compact thread
-   style posts it in yesterday's results thread. Highlights, full results, and a weekly
-   summary follow in the detail thread; failures retry without changing the frozen board.
+   style posts it in yesterday's results thread and includes the highlights, full
+   results, and weekly summary in the same message when they fit. Otherwise,
+   details follow in the thread. Failures retry without changing the frozen board.
 3. At or after **08:05**, compact thread style edits today's pinned parent with the
    current month's finalized top three, yesterday's winner, and a thread invitation.
-   This happens even if TimeGuessr has not reset. Game links and status go into today's
-   thread once its puzzle is ready, or by noon with a warning. Standard thread style
-   edits its pinned parent with links; channel mode posts a links/status embed.
-   Other games can be submitted before this update.
+   This happens even if TimeGuessr has not reset. Both thread styles update the
+   pinned guide in place once the puzzle is ready, or by noon with a warning.
+   Channel mode posts a links/status embed. Other games can be submitted before
+   this update.
 4. `/status` reads TimeGuessr's live next-reset timer for its response. The timer and
    current puzzle number come from TimeGuessr over HTTPS. If its page cannot be read,
    the bot uses a general reset warning and still sends the links post.

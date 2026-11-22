@@ -136,6 +136,8 @@ class Store:
             ("linked", "INTEGER NOT NULL DEFAULT 0"),
             ("morning_updated", "INTEGER NOT NULL DEFAULT 0"),
             ("header_updated", "INTEGER NOT NULL DEFAULT 0"),
+            ("guide_message_id", "INTEGER"),
+            ("guide_pinned", "INTEGER NOT NULL DEFAULT 0"),
             ("announcement_style", "TEXT NOT NULL DEFAULT 'standard'"),
             ("pinned", "INTEGER NOT NULL DEFAULT 0"),
         ):
@@ -148,6 +150,7 @@ class Store:
         if "elapsed_seconds" not in columns:
             self.db.execute("ALTER TABLE submissions ADD COLUMN elapsed_seconds INTEGER")
         self.db.execute("INSERT OR IGNORE INTO schema_version VALUES (7)")
+        self.db.execute("INSERT OR IGNORE INTO schema_version VALUES (8)")
         self.db.commit()
 
     def close(self):
@@ -442,12 +445,20 @@ class Store:
             )
 
     def mark_prompt_flag(self, guild_id: int, day: date, flag: str, value: bool = True):
-        if flag not in ("linked", "morning_updated", "header_updated", "pinned"):
+        if flag not in ("linked", "morning_updated", "header_updated", "pinned", "guide_pinned"):
             raise ValueError("Invalid prompt flag.")
         with self.db:
             self.db.execute(
                 f"UPDATE daily_prompts SET {flag}=? WHERE guild_id=? AND day=?",
                 (int(value), guild_id, day.isoformat()),
+            )
+
+    def mark_prompt_guide(self, guild_id: int, day: date, message_id: int):
+        with self.db:
+            self.db.execute(
+                "UPDATE daily_prompts SET guide_message_id=?, guide_pinned=0, morning_updated=0 "
+                "WHERE guild_id=? AND day=?",
+                (message_id, guild_id, day.isoformat()),
             )
 
     def pinned_prompts(self, guild_id: int, before: date) -> list[sqlite3.Row]:

@@ -182,22 +182,19 @@ def thread_prompt_embed(
     if cfg.announcement_style == "compact":
         description = phrase(
             cfg.language,
-            f"Post today's Share results in {destination}. "
-            "Today's final standings and game links appear in this thread. "
-            "The monthly top three will be added here in the morning.",
-            f"Poste deine heutigen Spielergebnisse in {destination}. "
-            "Der heutige Endstand und die Spiellinks stehen in diesem Thread. "
-            "Die Monats-Top-3 folgen heute Morgen hier.",
+            f"Open {destination}, pick a game from the pinned guide and paste "
+            "your Share result straight into the thread.",
+            f"Öffne {destination}, wähle ein Spiel aus der angepinnten Anleitung "
+            "und poste deinen Teilen-Text direkt im Thread.",
         )
     else:
         description = phrase(
             cfg.language,
-            f"Post today's Share results in {destination}. "
-            f"The final board appears in <#{cfg.output_channel_id}> after cutoff.\n"
-            "Game links and puzzle status will be added here in the morning.",
-            f"Poste deine heutigen Spielergebnisse in {destination}. "
-            f"Die Tageswertung erscheint nach dem Stichtag in <#{cfg.output_channel_id}>.\n"
-            "Spiellinks und Rätselstatus folgen heute Morgen hier.",
+            f"Open {destination}, pick a game from the pinned guide and paste "
+            f"your Share result into the thread. Final standings go to <#{cfg.output_channel_id}>.",
+            f"Öffne {destination}, wähle ein Spiel aus der angepinnten Anleitung "
+            "und poste deinen Teilen-Text im Thread. "
+            f"Die Tageswertung erscheint in <#{cfg.output_channel_id}>.",
         )
     embed = discord.Embed(
         title=f"{phrase(cfg.language, 'Play today', 'Heute spielen')} · {day}",
@@ -205,6 +202,24 @@ def thread_prompt_embed(
         description=description,
     )
     embed.set_footer(text=prompt_marker(cfg.guild_id, day))
+    return embed
+
+
+def thread_guide_embed(
+    store: Store, cfg: ServerConfig, day: date, thread_id: int, reset: datetime | None = None
+) -> discord.Embed:
+    embed = status_embed(store, cfg, day, reset, scheduled=True, thread_id=thread_id)
+    instructions = phrase(
+        cfg.language,
+        "**How to join**\nPick a game below. When you finish, use the game's Share button "
+        "to copy your result, then paste it as a message in this thread. "
+        "Look for ✅ to see that it counted.",
+        "**So machst du mit**\nWähle unten ein Spiel. Kopiere danach dein Ergebnis über "
+        "„Teilen“ und poste den Text als Nachricht direkt in diesem Thread. "
+        "Ein ✅ zeigt dir, dass dein Ergebnis zählt.",
+    )
+    embed.description = f"{instructions}\n\n{embed.description}"
+    embed.set_footer(text=links_marker(cfg.guild_id, day))
     return embed
 
 
@@ -259,8 +274,10 @@ def compact_announcement_embed(
             + "\n\n"
             + phrase(
                 language,
-                f"Want to join? Open <#{thread_id}> for the games and post your results there.",
-                f"Du willst mitmachen? Schau in <#{thread_id}> und poste dort deine Ergebnisse.",
+                f"Want to join? Open <#{thread_id}> for the pinned game links. "
+                "Paste your Share result straight into that thread.",
+                f"Mitmachen? Die Spiellinks sind in <#{thread_id}> angepinnt. "
+                "Kopiere dein Ergebnis über „Teilen“ und poste den Text direkt im Thread.",
             )
         ),
     )
@@ -865,15 +882,24 @@ class DailyGamesBot(commands.Bot):
             )
             details = self.store.details(cfg.guild_id, day)
         # Already-attempted old boards retain their previous layout and page markers.
+        delivery = json.loads(details["payload"]) if details else None
         embeds = (
-            [discord.Embed.from_dict(json.loads(details["payload"])["summary"])]
-            if details
+            [discord.Embed.from_dict(delivery["summary"])]
+            if delivery
             else (
                 board_embeds(
                     snapshot, cfg.guild_id, final=True, scheduled=True, language=cfg.language
                 )
             )
         )
+        extra = (
+            [discord.Embed.from_dict(item) for item in delivery["embeds"]]
+            if delivery and compact_thread and isinstance(channel, discord.Thread)
+            else []
+        )
+        bundle = [*embeds, *extra]
+        can_bundle = bool(extra) and len(bundle) <= 10 and sum(map(len, bundle)) <= 6000
+        planned_footers = {embed.footer.text for embed in (bundle if can_bundle else embeds)}
         marker = board_marker(cfg.guild_id, day)
         # If a send timed out or we crashed after Discord accepted it, find the existing post.
         # Check each page separately: a crash partway through a large board resumes its pages.
@@ -887,22 +913,30 @@ class DailyGamesBot(commands.Bot):
                     continue
                 for embed in message.embeds:
                     footer = embed.footer.text or ""
-                    if footer.startswith(marker + " · page ") or any(
-                        footer == planned.footer.text for planned in embeds
-                    ):
+                    if footer.startswith(marker + " · page ") or footer in planned_footers:
                         found[footer] = message.id
         if not board["attempted_at"]:
             self.store.mark_attempt(cfg.guild_id, day, now)
         last_id = None
-        for embed in embeds:
-            footer = embed.footer.text
-            if footer in found:
-                last_id = found[footer]
-                continue
+        if can_bundle and embeds[0].footer.text not in found:
             message = await channel.send(
-                embed=embed, allowed_mentions=discord.AllowedMentions.none()
+                embeds=bundle, allowed_mentions=discord.AllowedMentions.none(), silent=True
             )
             last_id = message.id
+            found.update({embed.footer.text: message.id for embed in bundle})
+        else:
+            for embed in embeds:
+                footer = embed.footer.text
+                if footer in found:
+                    last_id = found[footer]
+                    continue
+                message = await channel.send(
+                    embed=embed, allowed_mentions=discord.AllowedMentions.none()
+                )
+                last_id = message.id
+        if can_bundle and all(found.get(embed.footer.text) == last_id for embed in bundle):
+            # Save this before the board ID so a crash can't repost the bundled details.
+            self.store.update_details(cfg.guild_id, day, thread_id=channel.id, complete=True)
         self.store.mark_posted(cfg.guild_id, day, last_id)
         self.report_health(
             last_final_post_at=datetime.now(UTC).isoformat(),
@@ -1048,14 +1082,14 @@ class DailyGamesBot(commands.Bot):
             prompt = self.store.prompt(cfg.guild_id, day)
         parent_message = None
         morning_due = now >= boundary(day, cfg.timezone, "08:05").astimezone(UTC)
-        if (
-            not prompt["linked"]
-            or not prompt["pinned"]
-            or (style == "compact" and not prompt["header_updated"] and morning_due)
-            or (style != "compact" and not prompt["morning_updated"] and morning_due)
-        ):
+        # Also update a legacy opening post the first time its thread gets a guide.
+        refresh_parent = not prompt["linked"] or prompt["guide_message_id"] is None
+        update_header = (
+            style == "compact" and morning_due and (not prompt["header_updated"] or refresh_parent)
+        )
+        if refresh_parent or not prompt["pinned"] or update_header:
             parent_message = await channel.fetch_message(prompt["message_id"])
-        if not prompt["linked"]:
+        if refresh_parent and not update_header:
             await parent_message.edit(embed=thread_prompt_embed(presentation_cfg, day, thread.id))
             self.store.mark_prompt_flag(cfg.guild_id, day, "linked")
         if not prompt["pinned"]:
@@ -1067,9 +1101,7 @@ class DailyGamesBot(commands.Bot):
                 log.warning("Could not pin daily results prompt in server %s", cfg.guild_id)
         if self.store.prompt(cfg.guild_id, day)["pinned"]:
             await self.unpin_previous_prompts_locked(cfg.guild_id, day)
-        if not morning_due:
-            return
-        if style == "compact" and not prompt["header_updated"]:
+        if update_header:
             yesterday = self.store.board(cfg.guild_id, day - timedelta(days=1))
             monthly = period_snapshot(
                 self.store.finalized_snapshots(
@@ -1088,8 +1120,46 @@ class DailyGamesBot(commands.Bot):
                     json.loads(yesterday["snapshot"]) if yesterday else None,
                 )
             )
+            self.store.mark_prompt_flag(cfg.guild_id, day, "linked")
             self.store.mark_prompt_flag(cfg.guild_id, day, "header_updated")
-        if prompt["morning_updated"]:
+
+        await self.publish_thread_guide(thread, presentation_cfg, day, now, morning_due)
+
+    async def publish_thread_guide(
+        self, thread: discord.Thread, cfg: ServerConfig, day: date, now: datetime, morning_due: bool
+    ):
+        prompt = self.store.prompt(cfg.guild_id, day)
+        guide_id = prompt["guide_message_id"]
+        guide = None
+        if guide_id is None:
+            # Recover an uncertain send or a guide posted by the previous version.
+            async for message in thread.history(
+                limit=None, after=boundary(day, cfg.timezone, cfg.cutoff), oldest_first=True
+            ):
+                if message.author.id == self.user.id and any(
+                    item.footer.text == links_marker(cfg.guild_id, day) for item in message.embeds
+                ):
+                    guide = message
+                    break
+            if guide is None:
+                guide = await thread.send(
+                    embed=thread_guide_embed(self.store, cfg, day, thread.id),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                    silent=True,
+                )
+            guide_id = guide.id
+            self.store.mark_prompt_guide(cfg.guild_id, day, guide_id)
+            prompt = self.store.prompt(cfg.guild_id, day)
+        if not prompt["guide_pinned"]:
+            try:
+                if guide is None:
+                    guide = await thread.fetch_message(guide_id)
+                if not guide.pinned:
+                    await guide.pin(reason="Today's game links and submission instructions")
+                self.store.mark_prompt_flag(cfg.guild_id, day, "guide_pinned")
+            except discord.HTTPException:
+                log.warning("Could not pin daily game guide in server %s", cfg.guild_id)
+        if not morning_due or prompt["morning_updated"]:
             return
         expected_puzzle = int(
             self.store.puzzle_for_day(cfg.guild_id, Game.TIMEGUESSR, day)
@@ -1106,34 +1176,13 @@ class DailyGamesBot(commands.Bot):
             and now < boundary(day, cfg.timezone, "12:00").astimezone(UTC)
         ):
             return
-        embed = status_embed(
-            self.store,
-            presentation_cfg,
-            day,
-            await self.daily_reset(cfg, day, now),
-            scheduled=True,
-            thread_id=thread.id,
+        if guide is None:
+            guide = await thread.fetch_message(guide_id)
+        await guide.edit(
+            embed=thread_guide_embed(
+                self.store, cfg, day, thread.id, await self.daily_reset(cfg, day, now)
+            )
         )
-        if style == "compact":
-            embed.set_footer(text=links_marker(cfg.guild_id, day))
-            # The parent stays short. Reconcile an ambiguous thread send by footer.
-            found = False
-            async for message in thread.history(
-                limit=None,
-                after=boundary(day, cfg.timezone, "08:05").astimezone(UTC) - timedelta(minutes=5),
-                oldest_first=True,
-            ):
-                if message.author.id == self.user.id and any(
-                    item.footer.text == links_marker(cfg.guild_id, day) for item in message.embeds
-                ):
-                    found = True
-                    break
-            if not found:
-                await thread.send(
-                    embed=embed, allowed_mentions=discord.AllowedMentions.none(), silent=True
-                )
-        else:
-            await parent_message.edit(embed=embed)
         self.store.mark_prompt_flag(cfg.guild_id, day, "morning_updated")
 
     async def unpin_previous_prompts_locked(self, guild_id: int, day: date):

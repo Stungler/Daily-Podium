@@ -334,12 +334,12 @@ days retain their original routing and scores. `/result_mode channel` switches b
 way. The configured results channel becomes the parent for the daily results thread; the
 board channel can be the same or a different channel.
 
-In thread mode, the bot creates a short daily post and public results thread when the
-server's competition day opens at its cutoff. It pins that parent post and unpins only
-its previous daily post. In standard style, morning game links and TimeGuessr status
-edit that same parent post at 08:05 or when the expected puzzle is ready; they do not
-add a second morning post. Members paste Share results into the thread, where the bot applies the
-same scoring, duplicate protection, emoji reactions, and link-preview suppression.
+In thread mode, the bot creates a short daily post and public results thread at
+cutoff. It pins the parent post and unpins only its previous daily post. Inside
+the thread it pins one guide with all the game links, the deadline, and instructions.
+Open a game from the guide, copy your result with the game's Share button, then
+paste it as a message in the thread. A ✅ confirms the result counted. The morning
+update edits the pinned guide in place.
 `/status` links to the active thread. Results posted in the parent channel after the
 thread opens get a reply pointing to the thread. If the bot was offline before it
 could create the thread, parent-channel Share messages from that gap are recovered
@@ -366,8 +366,10 @@ At 08:05 it edits that post with yesterday's winner, the current month's top thr
 from finalized days, and an invitation to use the thread. An edit does not create a
 new morning notification. The previous day's final board, highlights, full results,
 and weekly stats go into the previous day's results thread at cutoff + five minutes.
-Game links and TimeGuessr status go into today's thread at or after 08:05; if TimeGuessr
-has not reset, only that thread post waits, while the short parent update still appears.
+The bot bundles the final board and details in one thread message when they fit
+within Discord's embed limits. The pinned guide has game links from cutoff.
+If TimeGuessr is delayed, the guide keeps its reset warning while other games
+remain available, and the short parent update still appears at 08:05.
 If a daily results thread is unavailable, the final board falls back to the configured
 board channel so standings are not lost. `!announcement_style standard` restores the
 original posting style. Compact style has an effect only in thread mode.

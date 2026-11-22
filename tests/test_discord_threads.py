@@ -328,7 +328,7 @@ def test_additive_schema_preserves_old_scores(tmp_path, config):
         assert upgraded.board(100, DAY)["snapshot"] == before
         assert upgraded.details(100, DAY) is None
         assert upgraded.prompt(100, DAY) is None
-        assert upgraded.db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 7
+        assert upgraded.db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 8
     finally:
         upgraded.close()
 
@@ -387,6 +387,8 @@ def test_prompt_retry_upgrade_preserves_existing_delivery_state(tmp_path, config
     try:
         assert upgraded.prompt(100, DAY)["message_id"] == 7000
         assert upgraded.prompt(100, DAY)["retry_at"] is None
-        assert upgraded.db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 7
+        assert upgraded.prompt(100, DAY)["guide_message_id"] is None
+        assert upgraded.prompt(100, DAY)["guide_pinned"] == 0
+        assert upgraded.db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 8
     finally:
         upgraded.close()

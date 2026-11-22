@@ -86,7 +86,33 @@ async def thread_server(store, config):
         thread.history.side_effect = lambda **kwargs: history(
             state.thread_messages[thread_id], **kwargs
         )
-        thread.send = AsyncMock(return_value=SimpleNamespace(id=thread_id + 1))
+
+        async def send_in_thread(**kwargs):
+            messages = state.thread_messages[thread_id]
+            message = SimpleNamespace(
+                id=thread_id + len(messages) + 1,
+                author=SimpleNamespace(id=123, bot=True),
+                webhook_id=None,
+                pinned=False,
+                embeds=kwargs["embeds"] if "embeds" in kwargs else [kwargs["embed"]],
+            )
+
+            async def edit(**edit_kwargs):
+                message.embeds = [edit_kwargs["embed"]]
+
+            async def pin(**_kwargs):
+                message.pinned = True
+
+            message.edit = AsyncMock(side_effect=edit)
+            message.pin = AsyncMock(side_effect=pin)
+            messages.append(message)
+            return message
+
+        async def fetch_thread_message(message_id):
+            return next(msg for msg in state.thread_messages[thread_id] if msg.id == message_id)
+
+        thread.send = AsyncMock(side_effect=send_in_thread)
+        thread.fetch_message = AsyncMock(side_effect=fetch_thread_message)
         state.threads[thread_id] = thread
         state.thread_messages[thread_id] = []
         return thread
@@ -190,7 +216,7 @@ async def test_scheduler_opens_thread_before_morning(thread_server, store, confi
     assert thread_server.board.send.await_count == 0
 
 
-async def test_thread_prompt_is_pinned_once_and_morning_links_edit_it(
+async def test_thread_opens_with_one_pinned_guide_and_edits_it_in_the_morning(
     thread_server, store, config, monkeypatch
 ):
     store.set_result_mode(config.guild_id, DAY, "thread", actor_id=1)
@@ -205,12 +231,21 @@ async def test_thread_prompt_is_pinned_once_and_morning_links_edit_it(
     assert thread_server.parent.create_thread.await_count == 1
     parent_message = thread_server.state.messages[prompt["message_id"]]
     parent_message.pin.assert_awaited_once()
+    thread = thread_server.state.threads[prompt["thread_id"]]
+    (guide,) = thread_server.state.thread_messages[thread.id]
+    assert guide.id == prompt["guide_message_id"]
+    assert prompt["guide_pinned"] and guide.pinned
+    assert "paste it as a message in this thread" in guide.embeds[0].description
+    assert "https://timeguessr.com" in guide.embeds[0].description
+    guide.pin.assert_awaited_once()
     monkeypatch.setattr("daily_games.bot.current_daily_puzzle", AsyncMock(return_value=1262))
     monkeypatch.setattr("daily_games.bot.next_reset", AsyncMock(return_value=None))
     await bot.publish_thread_prompt_locked(config, DAY, datetime(2026, 11, 13, 8, tzinfo=UTC))
     assert store.prompt(config.guild_id, DAY)["morning_updated"] == 1
     assert f"<#{prompt['thread_id']}>" in parent_message.embeds[0].description
-    assert parent_message.edit.await_count == 2
+    parent_message.edit.assert_awaited_once()
+    guide.edit.assert_awaited_once()
+    thread.send.assert_awaited_once()
 
 
 def test_compact_german_announcement_shows_month_and_yesterday(config):
@@ -281,7 +316,9 @@ async def test_compact_morning_header_appears_while_timeguessr_is_delayed(
     parent = thread_server.state.messages[prompt["message_id"]]
     assert "Monats-Top-3" in parent.embeds[0].description
     thread = thread_server.state.threads[prompt["thread_id"]]
-    thread.send.assert_not_awaited()
+    thread.send.assert_awaited_once()
+    (guide,) = thread_server.state.thread_messages[thread.id]
+    guide.edit.assert_not_awaited()
     monkeypatch.setattr("daily_games.bot.current_daily_puzzle", AsyncMock(return_value=1262))
     monkeypatch.setattr("daily_games.bot.next_reset", AsyncMock(return_value=None))
     await thread_server.bot.publish_thread_prompt_locked(
@@ -289,6 +326,7 @@ async def test_compact_morning_header_appears_while_timeguessr_is_delayed(
     )
     assert store.prompt(cfg.guild_id, DAY)["morning_updated"] == 1
     thread.send.assert_awaited_once()
+    guide.edit.assert_awaited_once()
 
 
 async def test_compact_morning_links_reconcile_after_ambiguous_send(
@@ -306,23 +344,19 @@ async def test_compact_morning_links_reconcile_after_ambiguous_send(
     )
     prompt = store.prompt(cfg.guild_id, DAY)
     thread = thread_server.state.threads[prompt["thread_id"]]
-    sent_embed = thread.send.await_args.kwargs["embed"]
-    thread_server.state.thread_messages[thread.id].append(
-        SimpleNamespace(
-            id=discord.utils.time_snowflake(midnight + timedelta(hours=8, minutes=5)) + 1,
-            author=SimpleNamespace(id=123),
-            embeds=[sent_embed],
-        )
-    )
+    (guide,) = thread_server.state.thread_messages[thread.id]
     with store.db:
         store.db.execute(
-            "UPDATE daily_prompts SET morning_updated=0 WHERE guild_id=? AND day=?",
+            "UPDATE daily_prompts SET guide_message_id=NULL, guide_pinned=0 "
+            "WHERE guild_id=? AND day=?",
             (cfg.guild_id, DAY.isoformat()),
         )
     await thread_server.bot.publish_thread_prompt_locked(
         cfg, DAY, midnight + timedelta(hours=8, minutes=6)
     )
     thread.send.assert_awaited_once()
+    guide.pin.assert_awaited_once()
+    assert store.prompt(cfg.guild_id, DAY)["guide_message_id"] == guide.id
     assert store.prompt(cfg.guild_id, DAY)["morning_updated"] == 1
 
 
@@ -343,8 +377,8 @@ async def test_style_change_keeps_existing_daily_prompt_layout(
     prompt = store.prompt(cfg.guild_id, DAY)
     parent = thread_server.state.messages[prompt["message_id"]]
     assert "Play today" in parent.embeds[0].title
-    assert "Play daily" in parent.embeds[0].description
-    thread_server.state.threads[prompt["thread_id"]].send.assert_not_awaited()
+    assert "pinned guide" in parent.embeds[0].description
+    thread_server.state.threads[prompt["thread_id"]].send.assert_awaited_once()
 
 
 async def test_new_daily_pin_unpins_only_previous_bot_prompt(thread_server, store, config):
@@ -531,7 +565,46 @@ async def test_final_details_use_results_thread(thread_server, store, config):
     assert store.details(config.guild_id, DAY)["thread_id"] == thread_id
     assert store.details(config.guild_id, DAY)["complete"] == 1
     thread_server.board.create_thread.assert_not_awaited()
-    assert thread_server.state.threads[thread_id].send.await_count == 3
+    assert thread_server.state.threads[thread_id].send.await_count == 4
+
+
+async def test_compact_final_board_bundles_details_and_reuses_post_on_retry(
+    thread_server, store, config
+):
+    store.set_result_mode(config.guild_id, DAY, "thread", actor_id=1)
+    store.set_presentation(config.guild_id, actor_id=1, style="compact")
+    cfg = store.config(config.guild_id)
+    bot = thread_server.bot
+    await bot.publish_thread_prompt_locked(cfg, DAY, datetime(2026, 11, 13, 0, tzinfo=UTC))
+    thread_id = store.prompt(cfg.guild_id, DAY)["thread_id"]
+    thread = thread_server.state.threads[thread_id]
+    message = incoming(cfg, datetime(2026, 11, 13, 18, tzinfo=UTC), TIMEGUESSR)
+    message.channel, message.guild = thread, thread_server.guild
+    await bot.ingest(message, cfg, feedback=False)
+    store.freeze(
+        cfg.guild_id,
+        DAY,
+        cfg.output_channel_id,
+        make_snapshot(store.results(cfg.guild_id, DAY), DAY, cfg),
+    )
+    cutoff = datetime(2026, 11, 13, 23, 5, tzinfo=UTC)
+    send = thread.send.side_effect
+
+    async def timeout_after_send(**kwargs):
+        posted = await send(**kwargs)
+        posted.id = discord.utils.time_snowflake(cutoff, high=True)
+        raise TimeoutError
+
+    thread.send.side_effect = timeout_after_send
+    with pytest.raises(TimeoutError):
+        await bot.publish_locked(cfg, DAY, cutoff)
+    assert len(thread.send.await_args.kwargs["embeds"]) == 4
+    thread.send.side_effect = send
+    await bot.publish_locked(cfg, DAY, cutoff + timedelta(seconds=30))
+    assert thread.send.await_count == 2  # Opening guide and one final board.
+    assert store.details(cfg.guild_id, DAY)["complete"]
+    assert store.board(cfg.guild_id, DAY)["message_id"]
+    thread_server.board.send.assert_not_awaited()
 
 
 def test_thread_mode_requires_pin_permission(thread_server):
