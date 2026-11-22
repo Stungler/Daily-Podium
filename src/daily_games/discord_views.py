@@ -328,7 +328,7 @@ def player_stats_embed(stats: dict, display_name: str, language="en") -> discord
     )
     for game in Game:
         data = stats["games"][game.value]
-        if game == Game.WIKI and not data["played"]:
+        if game not in DEFAULT_GAMES and not data["played"]:
             continue
         if not data["played"]:
             value = phrase(

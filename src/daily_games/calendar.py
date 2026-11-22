@@ -7,7 +7,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .models import Game, ParsedResult, ServerConfig
 
 ANCHOR_DAY = date(2026, 11, 13)
-ANCHORS = {Game.TIMEGUESSR: 1262, Game.SIZE_IT_UP: 96, Game.METAZOOA: 1201}
+KRILLION_FIRST_DAY = date(2026, 7, 16)
+KRILLION_TIMEZONE = "America/New_York"
+ANCHORS = {
+    Game.TIMEGUESSR: 1262,
+    Game.SIZE_IT_UP: 96,
+    Game.METAZOOA: 1201,
+    Game.KRILLION: (ANCHOR_DAY - KRILLION_FIRST_DAY).days + 1,
+}
 
 
 def validate_timezone(value: str) -> str:

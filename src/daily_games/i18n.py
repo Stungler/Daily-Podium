@@ -12,6 +12,9 @@ def scoring_label(language: str, mode: str) -> str:
 
 
 PARSER_ERRORS_DE = {
+    "Krillion: paste the daily dive number and a score from 0 to 700.": (
+        "Krillion: Poste die Nummer des täglichen Tauchgangs und eine Punktzahl von 0 bis 700."
+    ),
     "The Wiki Game Daily: paste the complete Share result with steps and time.": (
         "The Wiki Game Daily: Poste den vollständigen Teilen-Text mit Schritten und Zeit."
     ),

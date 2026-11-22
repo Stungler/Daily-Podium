@@ -8,6 +8,7 @@ class Game(StrEnum):
     SIZE_IT_UP = "sizeitup"
     METAZOOA = "metazooa"
     WIKI = "wikigame"
+    KRILLION = "krillion"
 
 
 DEFAULT_GAMES = (Game.TIMEGUESSR, Game.SIZE_IT_UP, Game.METAZOOA)
@@ -18,6 +19,7 @@ GAME_TITLES = {
     Game.SIZE_IT_UP: "Size It Up",
     Game.METAZOOA: "Metazooa",
     Game.WIKI: "The Wiki Game Daily",
+    Game.KRILLION: "Krillion",
 }
 
 GAME_URLS = {
@@ -25,6 +27,7 @@ GAME_URLS = {
     Game.SIZE_IT_UP: "https://magnitudle.com/size-it-up",
     Game.METAZOOA: "https://metazooa.com/play/daily",
     Game.WIKI: "https://www.thewikigamedaily.com/",
+    Game.KRILLION: "https://krillion.io/",
 }
 
 

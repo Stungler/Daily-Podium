@@ -84,7 +84,7 @@ sequenceDiagram
 
 `bot.py` listens to configured results channels and its saved daily results threads
 for score ingestion. `parsers.py`
-recognizes four Share formats. Scores are self-reported. For Wiki Game, the bot
+recognizes five Share formats. Scores are self-reported. For Wiki Game, the bot
 checks the start and target against the official route for the competition date.
 `calendar.py` maps numbered puzzles to competition dates and applies the guild's
 cutoff. `service.py` checks the dated lineup, puzzle identity, and whether the
@@ -93,7 +93,7 @@ single-game messages receive ✅ plus streak reactions; invalid input gets feedb
 For recognized Share messages, the bot also suppresses link previews when it has
 Manage Messages in the results channel; it does not edit the player's text.
 
-Each guild's standings are independent. `scoring.py` ranks TimeGuessr and Size It Up
+Each guild's standings are independent. `scoring.py` ranks TimeGuessr, Size It Up, and Krillion
 by higher score, Metazooa by fewer guesses, and Wiki Game by fewer steps with time as
 the tiebreaker. The guild's scoring rule turns those ranks into points.
 `presentation.py` turns those results into a plain snapshot.

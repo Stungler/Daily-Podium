@@ -15,6 +15,7 @@ from discord.ext import commands, tasks
 from .calendar import (
     ANCHOR_DAY,
     ANCHORS,
+    KRILLION_TIMEZONE,
     active_day,
     boundary,
     closes_at,
@@ -52,8 +53,8 @@ ScoringMode = Literal["players_beaten", "placement"]
 ResultMode = Literal["channel", "thread"]
 Language = Literal["en", "de"]
 AnnouncementStyle = Literal["standard", "compact"]
-NumberedGame = Literal["timeguessr", "sizeitup", "metazooa"]
-GameName = Literal["timeguessr", "sizeitup", "metazooa", "wikigame"]
+NumberedGame = Literal["timeguessr", "sizeitup", "metazooa", "krillion"]
+GameName = Literal["timeguessr", "sizeitup", "metazooa", "wikigame", "krillion"]
 RotationAction = Literal["show", "set", "inherit"]
 GLOBAL_CALENDAR = ServerConfig(0, 0, 0, "Europe/Berlin", "00:00", "players_beaten", ANCHOR_DAY)
 
@@ -104,7 +105,7 @@ def status_embed(
             if game in (Game.TIMEGUESSR, Game.SIZE_IT_UP)
             else ""
         )
-        identity = f"#{puzzle}" if game == Game.SIZE_IT_UP else puzzle
+        identity = f"#{puzzle}" if game in (Game.SIZE_IT_UP, Game.KRILLION) else puzzle
         if game == Game.SIZE_IT_UP:
             identity += f" ({day.isoformat()})"
         expected.append(
@@ -133,6 +134,14 @@ def status_embed(
             "TimeGuessr setzt möglicherweise später zurück als dieser Server. "
             "Prüfe den Timer und warte vor dem Teilen auf das neue Rätsel.",
         )
+    if Game.KRILLION in lineup:
+        opens = int(boundary(day, KRILLION_TIMEZONE, "00:00").timestamp())
+        krillion_note = phrase(
+            language,
+            f"Krillion's daily dive opens <t:{opens}:f> (midnight New York time).",
+            f"Krillions täglicher Tauchgang startet <t:{opens}:f> (Mitternacht in New York).",
+        )
+        reset_note = "\n".join(filter(None, (reset_note, krillion_note)))
     heading = (
         phrase(language, "Play today", "Heute spielen")
         if scheduled
@@ -307,6 +316,7 @@ def board_embeds(
         Game.SIZE_IT_UP: "Size",
         Game.METAZOOA: "Zoo",
         Game.WIKI: "Wiki",
+        Game.KRILLION: "Krillion",
     }
     games = [
         (Game(item), short_names[Game(item)]) for item in snapshot.get("lineup", DEFAULT_GAMES)
@@ -1417,7 +1427,7 @@ class CompetitionCommands(commands.Cog):
                 "Play a game and paste its **Share** result in the results channel.\n"
                 "In thread mode, paste it in today's pinned results thread.\n"
                 "`!lb` · standings and browser links\n"
-                "`!lb sizeitup` / `timeguessr` / `metazooa` · one game\n"
+                "`!lb <game>` · one game, e.g. `!lb krillion`\n"
                 "`!lb yesterday` / `!lb sizeitup 2026-11-13` · another day\n"
                 "`!weekly [day] [game]` · weekly points from finalized days\n"
                 "`!monthly [day] [game]` · monthly points from finalized days\n"
@@ -1432,7 +1442,7 @@ class CompetitionCommands(commands.Cog):
                 "Spiele ein Tagesrätsel und poste den **Teilen-Text** im Ergebniskanal.\n"
                 "Im Thread-Modus gehört er in den heutigen angepinnten Ergebnisthread.\n"
                 "`!lb` · Rangliste und Browserlinks\n"
-                "`!lb sizeitup` / `timeguessr` / `metazooa` · einzelnes Spiel\n"
+                "`!lb <spiel>` · einzelnes Spiel, z. B. `!lb krillion`\n"
                 "`!lb yesterday` / `!lb sizeitup 2026-11-13` · anderer Tag\n"
                 "`!weekly [day] [game]` · Wochenpunkte abgeschlossener Tage\n"
                 "`!monthly [day] [game]` · Monatspunkte abgeschlossener Tage\n"
@@ -1945,8 +1955,8 @@ class CompetitionCommands(commands.Cog):
             raise commands.BadArgument(
                 phrase(
                     self.language_for(ctx),
-                    "Choose all, timeguessr, sizeitup, metazooa, or wikigame.",
-                    "Wähle all, timeguessr, sizeitup, metazooa oder wikigame.",
+                    "Choose all, timeguessr, sizeitup, metazooa, wikigame, or krillion.",
+                    "Wähle all, timeguessr, sizeitup, metazooa, wikigame oder krillion.",
                 )
             ) from exc
         cfg = self.config(ctx)
@@ -2044,8 +2054,8 @@ class CompetitionCommands(commands.Cog):
             raise commands.BadArgument(
                 phrase(
                     self.language_for(ctx),
-                    "Choose all, timeguessr, sizeitup, metazooa, or wikigame.",
-                    "Wähle all, timeguessr, sizeitup, metazooa oder wikigame.",
+                    "Choose all, timeguessr, sizeitup, metazooa, wikigame, or krillion.",
+                    "Wähle all, timeguessr, sizeitup, metazooa, wikigame oder krillion.",
                 )
             ) from exc
         cfg = self.config(ctx)

@@ -78,6 +78,12 @@ def accept_result(
                 " TimeGuessr zeigt nach dem Tageswechsel möglicherweise noch das alte Rätsel."
                 " Warte auf das neue Tagesrätsel, bevor du für heute einreichst.",
             )
+        if result.game == Game.KRILLION and (expected - day).days == 1:
+            detail += phrase(
+                language,
+                " Krillion's new dive opens at midnight New York time.",
+                " Krillions neuer Tauchgang startet um Mitternacht in New York.",
+            )
         return Outcome("old", detail)
     if day > expected:
         return Outcome(

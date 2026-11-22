@@ -23,6 +23,7 @@ from daily_games.wiki_daily import parse_route
 DAY = date(2026, 11, 19)
 WIKI_LINEUP = (Game.TIMEGUESSR, Game.SIZE_IT_UP, Game.WIKI)
 SHARE = "Poet ➡️ Pluto ⏰ 03:15 🦶3 🔗 https://www.thewikigamedaily.com/"
+KRILLION_SHARE = "Krillion #130 🦐\n245\n\n🐟🫧🐟🦑🐟⬛🏮"
 
 
 def submit(store, cfg, share, day=DAY, user=1, hour=12):
@@ -104,6 +105,40 @@ def test_wiki_uses_server_cutoff_with_original_timestamp(store, config):
     store.register_wiki_route(DAY, "Poet", "Pluto")
     assert submit(store, cfg, SHARE, hour=4).status == "inactive"
     assert submit(store, cfg, SHARE, hour=5).status == "accepted"
+
+
+@pytest.mark.parametrize("score", ["701", "-1", "245/700", "fish"])
+def test_krillion_rejects_invalid_score_lines(score):
+    parsed, errors = parse_message(KRILLION_SHARE.replace("\n245\n", f"\n{score}\n"))
+    assert not parsed and errors
+
+
+def test_krillion_daily_rotation_ranks_scores_and_shows_game_link(store, config):
+    day = date(2026, 11, 22)
+    lineup = (Game.SIZE_IT_UP, Game.WIKI, Game.KRILLION)
+    assert submit(store, config, KRILLION_SHARE, day).status == "inactive"
+    store.set_rotation(0, day, lineup, actor_id=1)
+    assert submit(store, config, KRILLION_SHARE.replace("#130", "#129"), day).status == "old"
+    assert submit(store, config, KRILLION_SHARE.replace("#130", "#131"), day).status == "future"
+    assert submit(store, config, KRILLION_SHARE, day).status == "accepted"
+    assert submit(store, config, KRILLION_SHARE.replace("245", "700"), day, user=2).status == (
+        "accepted"
+    )
+    assert submit(store, config, KRILLION_SHARE.replace("245", "0"), day, user=3).status == (
+        "accepted"
+    )
+
+    snapshot = make_snapshot(store.results(config.guild_id, day), day, config, lineup)
+    ranked = game_snapshot(snapshot, Game.KRILLION)["rows"]
+    assert [row["games"]["krillion"]["score"] for row in ranked] == [700, 245, 0]
+    assert ranked[2]["games"]["krillion"]["solved"]
+    status = status_embed(store, config, day, None)
+    assert "Krillion: `#130`" in status.description
+    assert "https://krillion.io/" in status.description
+    assert "midnight New York time" in status.description
+    path = Path(store.db.execute("PRAGMA database_list").fetchone()[2])
+    public_board = public_data(path, b"test-key", "global", day.isoformat(), "krillion")["board"]
+    assert public_board["rows"][0]["games"]["krillion"]["score"] == 700
 
 
 def test_wiki_ranking_and_dashboard_rotation(store, config):

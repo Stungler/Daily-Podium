@@ -15,7 +15,7 @@ class ParseError(ValueError):
 # Splitting on game headers allows one message to contain several pasted results.
 HEADER = re.compile(
     r"(?im)^[^\w\n]*(?:TimeGuessr\s*#|(?:Magnitudle\s*[—–-]\s*)?Size It Up\b|"
-    r"Animal\s*#)"
+    r"Animal\s*#|Krillion[ \t]+#)"
 )
 INTEGER = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
 WIKI_SHARE = re.compile(
@@ -26,6 +26,7 @@ WIKI_SHARE = re.compile(
     re.IGNORECASE,
 )
 WIKI_ERROR = "The Wiki Game Daily: paste the complete Share result with steps and time."
+KRILLION_ERROR = "Krillion: paste the daily dive number and a score from 0 to 700."
 
 
 def _number(value: str) -> int:
@@ -91,6 +92,21 @@ def _metazooa(text: str) -> ParsedResult:
     return ParsedResult(Game.METAZOOA, str(int(puzzle[1])), int(success[1]))
 
 
+def _krillion(text: str) -> ParsedResult:
+    match = re.match(
+        r"^Krillion[ \t]+#([0-9]{1,6})[ \t]*(?:🦐️?[ \t]*)?\n"
+        r"(?:[ \t]*\n)*[ \t]*([0-9]{1,3})[ \t]*(?:\n|$)",
+        text,
+        re.IGNORECASE,
+    )
+    if match is None:
+        raise ParseError(KRILLION_ERROR)
+    puzzle, score = map(int, match.groups())
+    if puzzle == 0 or score > 700:
+        raise ParseError(KRILLION_ERROR)
+    return ParsedResult(Game.KRILLION, str(puzzle), score)
+
+
 def parse_message(content: str) -> tuple[list[ParsedResult], list[str]]:
     """Return supported results and errors; ordinary chat yields two empty lists."""
     content = unicodedata.normalize("NFC", content).replace("\r\n", "\n")
@@ -132,6 +148,8 @@ def parse_message(content: str) -> tuple[list[ParsedResult], list[str]]:
             if "timeguessr" in title
             else _sizeitup
             if "size it up" in title
+            else _krillion
+            if "krillion" in title
             else _metazooa
         )
         try:

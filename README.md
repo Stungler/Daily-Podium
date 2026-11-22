@@ -2,7 +2,8 @@
 
 A Python Discord bot for independent daily competitions in each server. Players paste
 their Share results from the active lineup. The supported games are **TimeGuessr**,
-**Magnitudle Size It Up (standard)**, **Metazooa**, and **The Wiki Game Daily**. The bot
+**Magnitudle Size It Up (standard)**, **Metazooa**, **The Wiki Game Daily**, and
+**Krillion**. The bot
 records scores, serves a combined leaderboard, and posts the final standings after
 the daily deadline.
 
@@ -66,7 +67,8 @@ old deployment's SQLite database, not in Git; a fresh clone starts with no serve
 ## Game rotation
 
 Each competition date has three active games. TimeGuessr, Size It Up, and Metazooa
-are the default lineup. The Wiki Game Daily is available as `wikigame`. A rotation
+are the default lineup. The Wiki Game Daily is available as `wikigame` and Krillion
+as `krillion`. A rotation
 changes future competition days and preserves past standings, points, and results.
 
 | Command | Who can use it | What it does |
@@ -96,6 +98,12 @@ If the site is unavailable and the route is missing from the local cache, the bo
 owner can register the published route with
 `!wiki_route YYYY-MM-DD "Start article" "Target article"`. Players can retry before
 cutoff. As with the other games, the bot accepts self-reported scores.
+
+For [Krillion](https://krillion.io/), paste the daily dive's Share text, such as
+`Krillion #130 🦐` followed by the score on its own line. Higher scores win
+(0–700), and the emoji row is ignored. Puzzle #1 is dated 16 July 2026.
+Krillion releases each daily dive at midnight New York time, so players on
+servers with an earlier cutoff should wait for the new dive before posting.
 
 ## Discord application setup
 
@@ -166,8 +174,8 @@ the Share message's link preview while keeping its text and link intact:
 ```
 
 `/leaderboard` offers `day` and `game` options (All games, TimeGuessr, Size It Up,
-Metazooa, and The Wiki Game Daily). Existing `!lb [day]` commands still work;
-`!lb yesterday sizeitup` and `!lb wikigame` also work.
+Metazooa, The Wiki Game Daily, and Krillion). Existing `!lb [day]` commands still
+work, along with `!lb yesterday sizeitup`, `!lb wikigame`, and `!lb krillion`.
 Single-game boards show only that game's participants, ranked by its awarded points with
 shared ranks for ties. Points match the combined board, including placement scoring.
 Historical boards use the saved final snapshot; viewing a game does not change it or the
@@ -244,7 +252,7 @@ at runtime.
   all three games that day; each worse rank earns one fewer. Each game has the same
   winning value, including when someone is its only player. Ties share the better rank
   and following places skip (1, 2, 2, 4). Failures still earn zero.
-- TimeGuessr and Size It Up rank by highest score. Metazooa ranks by fewest guesses.
+- TimeGuessr, Size It Up, and Krillion rank by highest score. Metazooa ranks by fewest guesses.
   The Wiki Game Daily ranks by fewest steps, then fastest time.
 - Successful zero-point game scores (such as TimeGuessr 0/50,000) are valid submissions.
 - Combined ties share a rank. Alphabetical order is only display order within that tie.
