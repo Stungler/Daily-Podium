@@ -41,6 +41,18 @@ only that unit. The old `data/*.pid` files and `data/*.log` files came from
 manual `nohup` launches; new processes use systemd PIDs and journal logs.
 Do not start a second manual bot alongside the service.
 
+### Deploying the daily thread guide
+
+Restart the bot with `systemctl --user restart daily-podium-bot.service`.
+On startup it adds the guide message ID and pin status to the existing SQLite
+database. On the next scheduler pass, it reuses any game-links message it finds
+in today's active results thread or posts and pins a guide if needed. If the
+guide appears but remains unpinned, check the bot's **Pin Messages** permission
+in the parent channel and look for a pin warning in the bot journal.
+
+For the posting options and the Discord setup commands, see
+[Daily results thread mode](README.md#daily-results-thread-mode).
+
 ## Backups
 
 `daily-podium-backup.timer` starts `daily-podium-backup.service` daily at 03:30

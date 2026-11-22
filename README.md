@@ -106,9 +106,10 @@ Open https://discord.com/developers/applications and select the bot.
 3. **Guild Install scopes:** `bot`, `applications.commands`.
 4. Permissions: View Channels, Send Messages, Read Message History, Add Reactions, Embed Links,
    Create Public Threads, and Send Messages in Threads. For daily results thread mode, also
-   grant **Pin Messages** and **Manage Messages** in the results parent channel. Pin Messages
-   rotates the day's pinned prompt; Manage Messages hides link previews on Share messages.
-   These permissions must also be allowed by the chosen channels' permission overwrites.
+   grant **Pin Messages** and **Manage Messages** in the results parent channel.
+   Pin Messages lets the bot pin the daily announcement and the guide inside its
+   thread. Manage Messages hides link previews on Share messages. Check the
+   chosen channel's permission overwrites too.
    For an existing installation, update the bot's role and channel permissions; update Guild
    Install permissions in the Developer Portal for future invites. No new privileged intent
    is needed for threads. Without Manage Messages, channel-mode results and reactions still
@@ -327,19 +328,19 @@ Read Message History permission is needed on the output channel and in threads f
 
 ### Daily results thread mode
 
-The default `channel` mode keeps the results channel and the 08:05 game-links post as before.
-An admin can choose `thread` during first `/setup`, or switch an existing server with
-`!result_mode thread` (or `/result_mode` where slash commands are registered). Existing-server changes begin on the next competition day; earlier
-days retain their original routing and scores. `/result_mode channel` switches back the same
-way. The configured results channel becomes the parent for the daily results thread; the
-board channel can be the same or a different channel.
+The default `channel` mode accepts results in the results channel and posts the
+game links at or after 08:05. An admin can choose `thread` during first `/setup`
+or switch an existing server with `!result_mode thread`. Use `!result_mode channel`
+to switch back. Changes for existing servers start the next competition day.
+The configured results channel becomes the parent for the daily threads. The
+board channel can be the same channel or a separate one.
 
 In thread mode, the bot creates a short daily post and public results thread at
 cutoff. It pins the parent post and unpins only its previous daily post. Inside
 the thread it pins one guide with all the game links, the deadline, and instructions.
 Open a game from the guide, copy your result with the game's Share button, then
-paste it as a message in the thread. A ✅ confirms the result counted. The morning
-update edits the pinned guide in place.
+paste it as a message in the thread. A ✅ confirms the result counted. The bot
+edits the guide in place at or after 08:05 when updating the game status.
 `/status` links to the active thread. Results posted in the parent channel after the
 thread opens get a reply pointing to the thread. If the bot was offline before it
 could create the thread, parent-channel Share messages from that gap are recovered
@@ -370,9 +371,10 @@ The bot bundles the final board and details in one thread message when they fit
 within Discord's embed limits. The pinned guide has game links from cutoff.
 If TimeGuessr is delayed, the guide keeps its reset warning while other games
 remain available, and the short parent update still appears at 08:05.
-If a daily results thread is unavailable, the final board falls back to the configured
-board channel so standings are not lost. `!announcement_style standard` restores the
-original posting style. Compact style has an effect only in thread mode.
+If no results thread was recorded for a day, the bot posts the final board to
+the configured board channel. Use `!announcement_style standard` to keep final
+boards in that channel. Both styles pin the game guide inside the results thread.
+Compact style has an effect only in thread mode.
 
 A failed recovery prevents finalization rather than freezing an incomplete board. Failures
 are logged and retried. Backlogged competition days are processed when the bot comes back.

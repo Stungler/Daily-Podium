@@ -119,8 +119,8 @@ The bot's `daily_tick` runs every 30 seconds. For a midnight cutoff in
 1. In thread mode, at the **00:00** cutoff, create today's parent prompt and its
    public results thread. Pin the prompt in the parent channel and one guide
    with links and submission instructions in the thread. Remove the previous
-   bot-owned parent pin. Early
-   parent-channel messages posted while the bot was offline are still recovered.
+   bot-owned parent pin. Recover early parent-channel messages posted while
+   the bot was offline.
 2. At or after **00:05**, recover missed results and freeze yesterday's board. Standard
    style posts the compact final embed in the configured board channel. Compact thread
    style posts it in yesterday's results thread and includes the highlights, full
@@ -143,7 +143,8 @@ receive the morning update at or after 08:05. Each guild stores `language` (`en`
 `de`) and `announcement_style` (`standard` or `compact`) in `servers`; `!language`
 and `!announcement_style` change only that guild. `result_modes`, `boards`, `board_details`,
 and `daily_prompts` store mode history, delivery state, cursors, attempted times,
-pins, and Discord message IDs. If a send times out after
+pins, and Discord message IDs. The guide has its own saved message ID and pin
+state, so pinning can be retried without sending another guide. If a send times out after
 Discord accepted it, the bot searches channel or thread history for its unique embed
 footer before retrying. Discord and SQLite cannot make one atomic transaction, so
 this reduces duplicate posts but cannot guarantee strict exactly-once delivery under

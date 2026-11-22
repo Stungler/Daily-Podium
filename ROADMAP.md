@@ -52,8 +52,9 @@ The services and backup timer are active; see [SYSTEMD.md](SYSTEMD.md).
    cutoff. Keep replies limited to rejected submissions so normal play stays quiet.
 5. **Optional daily results threads — implemented in source.** Per-server channel
    mode remains the default. Thread mode creates a results thread at each day's
-   cutoff, pins its parent prompt, edits that prompt with morning links, and routes
-   final details into the same thread. `/setup` selects a new server's mode;
+   cutoff, pins the parent announcement and one guide inside the thread, then
+   edits the guide in the morning. Compact style bundles the final board and
+   details in the thread when they fit in one Discord message. `/setup` selects a new server's mode;
    `/result_mode` changes an existing server from the next competition day.
    Per-thread cursors and mode history preserve recovery and prior results.
    See [README.md](README.md#daily-results-thread-mode) for use and permissions.
