@@ -221,6 +221,7 @@ in each server's results channel to compete there; results do not automatically 
 |---|---|---|
 | `/ping` | `!ping` | Connection check |
 | `/help` | `!help` | Instructions |
+| `/dailyhelp` | `!dailyhelp` | How to join, where to paste the result, and what ✅ means |
 | `/games [day]` | `!games [day]` | Links to the selected day's lineup |
 | `/leaderboard [day] [game]` | `!lb [day] [game]` or `!lb game [day]` | Combined or single-game current, yesterday, or dated board |
 | `/weekly [day] [game]` | `!weekly [day] [game]` | Week-to-date combined or per-game points from finalized boards |
@@ -345,10 +346,11 @@ board channel can be the same channel or a separate one.
 
 In thread mode, the bot creates a short daily post and public results thread at
 cutoff. It pins the parent post and unpins only its previous daily post. Inside
-the thread it pins one guide with all the game links, the deadline, and instructions.
-Open a game from the guide, copy your result with the game's Share button, then
-paste it as a message in the thread. A ✅ confirms the result counted. The bot
-edits the guide in place at or after 08:05 when updating the game status.
+the thread it pins a short guide with a link per game, the deadline, and
+`!dailyhelp`. Open a game from the guide, copy your result with the game's
+Share button, then paste it as a message in the thread. A ✅ confirms the
+result counted. Use `!status` for puzzle numbers and full reset details.
+The bot edits the guide in place at or after 08:05 when updating game status.
 `/status` links to the active thread. Results posted in the parent channel after the
 thread opens get a reply pointing to the thread. If the bot was offline before it
 could create the thread, parent-channel Share messages from that gap are recovered

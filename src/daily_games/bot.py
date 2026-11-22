@@ -76,7 +76,12 @@ def prompt_marker(guild_id: int, day: date) -> str:
 
 
 def links_marker(guild_id: int, day: date) -> str:
+    """Recognize guides posted before the compact layout."""
     return f"daily-games-links:{guild_id}:{day.isoformat()}"
+
+
+def thread_guide_title(day: date) -> str:
+    return f"Daily Games · {day}"
 
 
 def status_embed(
@@ -215,21 +220,40 @@ def thread_prompt_embed(
 
 
 def thread_guide_embed(
-    store: Store, cfg: ServerConfig, day: date, thread_id: int, reset: datetime | None = None
+    store: Store, cfg: ServerConfig, day: date, now: datetime, reset: datetime | None = None
 ) -> discord.Embed:
-    embed = status_embed(store, cfg, day, reset, scheduled=True, thread_id=thread_id)
+    language = cfg.language
+    deadline = closes_at(day, cfg)
+    lineup = store.rotation(cfg.guild_id).games_on(day)
+    games = []
+    for game in lineup:
+        link = f"• **[{GAME_TITLES[game]}]({GAME_URLS[game]})**"
+        opens = None
+        if game == Game.KRILLION:
+            opens = boundary(day, KRILLION_TIMEZONE, "00:00")
+        elif game == Game.TIMEGUESSR:
+            opens = reset
+        if opens is not None and now < opens < deadline:
+            label = phrase(language, "opens", "ab")
+            link += f" · {label} <t:{int(opens.timestamp())}:t>"
+        elif game == Game.TIMEGUESSR and reset is None:
+            label = phrase(language, "Reset timer", "Reset-Timer")
+            link += f" · [{label}](https://timeguessr.com/finalscoredaily)"
+        games.append(link)
     instructions = phrase(
-        cfg.language,
-        "**How to join**\nPick a game below. When you finish, use the game's Share button "
-        "to copy your result, then paste it as a message in this thread. "
-        "Look for ✅ to see that it counted.",
-        "**So machst du mit**\nWähle unten ein Spiel. Kopiere danach dein Ergebnis über "
-        "„Teilen“ und poste den Text als Nachricht direkt in diesem Thread. "
-        "Ein ✅ zeigt dir, dass dein Ergebnis zählt.",
+        language,
+        "Copy with **Share**, then paste here. ✅ = counted.",
+        "Mit **Teilen** kopieren und hier posten. ✅ = gewertet.",
     )
-    embed.description = f"{instructions}\n\n{embed.description}"
-    embed.set_footer(text=links_marker(cfg.guild_id, day))
-    return embed
+    deadline_label = phrase(language, "Deadline", "Abgabe bis")
+    return discord.Embed(
+        title=thread_guide_title(day),
+        color=MAUVE,
+        description=(
+            "\n".join(games) + f"\n\n{instructions}\n"
+            f"**{deadline_label}** <t:{int(deadline.timestamp())}:t> · `!dailyhelp`"
+        ),
+    )
 
 
 def compact_announcement_embed(
@@ -393,6 +417,7 @@ class DailyGamesBot(commands.Bot):
             allowed_mentions=discord.AllowedMentions.none(),
         )
         self.store = store
+        self.checked_thread_guides: dict[int, int] = {}
         self.wiki_route_lock = asyncio.Lock()
         self.wiki_retry: dict[date, float] = {}
         self.dev_guild_id = dev_guild_id
@@ -1147,13 +1172,15 @@ class DailyGamesBot(commands.Bot):
                 limit=None, after=boundary(day, cfg.timezone, cfg.cutoff), oldest_first=True
             ):
                 if message.author.id == self.user.id and any(
-                    item.footer.text == links_marker(cfg.guild_id, day) for item in message.embeds
+                    item.title == thread_guide_title(day)
+                    or item.footer.text == links_marker(cfg.guild_id, day)
+                    for item in message.embeds
                 ):
                     guide = message
                     break
             if guide is None:
                 guide = await thread.send(
-                    embed=thread_guide_embed(self.store, cfg, day, thread.id),
+                    embed=thread_guide_embed(self.store, cfg, day, now),
                     allowed_mentions=discord.AllowedMentions.none(),
                     silent=True,
                 )
@@ -1169,6 +1196,18 @@ class DailyGamesBot(commands.Bot):
                 self.store.mark_prompt_flag(cfg.guild_id, day, "guide_pinned")
             except discord.HTTPException:
                 log.warning("Could not pin daily game guide in server %s", cfg.guild_id)
+        if self.checked_thread_guides.get(cfg.guild_id) != guide_id:
+            try:
+                if guide is None:
+                    guide = await thread.fetch_message(guide_id)
+            except discord.NotFound:
+                pass
+            else:
+                if any(
+                    item.footer.text == links_marker(cfg.guild_id, day) for item in guide.embeds
+                ):
+                    await guide.edit(embed=thread_guide_embed(self.store, cfg, day, now))
+            self.checked_thread_guides[cfg.guild_id] = guide_id
         if not morning_due or prompt["morning_updated"]:
             return
         expected_puzzle = int(
@@ -1190,7 +1229,7 @@ class DailyGamesBot(commands.Bot):
             guide = await thread.fetch_message(guide_id)
         await guide.edit(
             embed=thread_guide_embed(
-                self.store, cfg, day, thread.id, await self.daily_reset(cfg, day, now)
+                self.store, cfg, day, now, await self.daily_reset(cfg, day, now)
             )
         )
         self.store.mark_prompt_flag(cfg.guild_id, day, "morning_updated")
@@ -1489,6 +1528,54 @@ class CompetitionCommands(commands.Cog):
             inline=False,
         )
         await ctx.send(embed=embed, ephemeral=True)
+
+    @commands.hybrid_command(name="dailyhelp", description="How to submit a daily game result.")
+    @commands.guild_only()
+    async def dailyhelp(self, ctx: commands.Context):
+        cfg = self.config(ctx)
+        day = active_day(datetime.now(UTC), cfg)
+        prompt = self.bot.store.prompt(cfg.guild_id, day)
+        thread_mode = self.bot.store.mode_for_day(cfg.guild_id, day) == "thread"
+        if thread_mode and prompt and prompt["thread_id"]:
+            destination = f"<#{prompt['thread_id']}>"
+        elif thread_mode:
+            destination = phrase(
+                cfg.language, "today's results thread", "dem heutigen Ergebnisthread"
+            )
+        else:
+            destination = f"<#{cfg.input_channel_id}>"
+        first_step = (
+            phrase(
+                cfg.language,
+                "Pick a game from the pinned guide or use `!games`.",
+                "Wähle ein Spiel aus der angepinnten Anleitung oder nutze `!games`.",
+            )
+            if thread_mode
+            else phrase(
+                cfg.language, "Use `!games` to pick a game.", "Wähle ein Spiel über `!games`."
+            )
+        )
+        description = phrase(
+            cfg.language,
+            "2. Finish today's puzzle and copy the result with the game's **Share** button.\n"
+            f"3. Paste the copied text in {destination} before the deadline. "
+            "✅ means it counted.\n\n"
+            "Your first accepted result per game counts. Use `!lb` for standings "
+            "and `!status` for puzzle numbers and the deadline.",
+            "2. Spiele das heutige Rätsel und kopiere das Ergebnis über **Teilen**.\n"
+            f"3. Poste den kopierten Text vor Ablauf der Frist in {destination}. "
+            "✅ heißt, dein Ergebnis zählt.\n\n"
+            "Pro Spiel zählt dein erstes angenommenes Ergebnis. "
+            "`!lb` zeigt die Rangliste, `!status` die Rätselnummern und die Abgabefrist.",
+        )
+        await ctx.send(
+            embed=discord.Embed(
+                title=phrase(cfg.language, "How to join", "So machst du mit"),
+                description=f"1. {first_step}\n{description}",
+                color=MAUVE,
+            ),
+            ephemeral=True,
+        )
 
     @commands.hybrid_command(name="games", description="Links to the three daily games.")
     async def games(self, ctx: commands.Context, day: str = "today"):

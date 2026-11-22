@@ -184,6 +184,21 @@ async def test_admin_can_set_german_and_compact_style(thread_server, store, conf
     assert "Kompakte Posts" in ctx.send.await_args.args[0]
 
 
+async def test_dailyhelp_points_to_the_current_thread_in_german(thread_server, store, config):
+    today = active_day(datetime.now(UTC), config)
+    store.set_result_mode(config.guild_id, today, "thread", actor_id=1)
+    store.set_presentation(config.guild_id, actor_id=1, language="de")
+    store.plan_prompt(config.guild_id, today, config.input_channel_id)
+    store.mark_prompt_thread(config.guild_id, today, 12345)
+    cog = CompetitionCommands(thread_server.bot)
+    ctx = SimpleNamespace(guild=thread_server.guild, send=AsyncMock())
+    await cog.dailyhelp.callback(cog, ctx)
+    embed = ctx.send.await_args.kwargs["embed"]
+    assert embed.title == "So machst du mit"
+    assert "**Teilen**" in embed.description
+    assert "<#12345>" in embed.description
+
+
 async def test_initial_setup_can_start_in_thread_mode(thread_server, store):
     cog = CompetitionCommands(thread_server.bot)
     guild = SimpleNamespace(id=101, me=SimpleNamespace(id=123))
@@ -235,8 +250,10 @@ async def test_thread_opens_with_one_pinned_guide_and_edits_it_in_the_morning(
     (guide,) = thread_server.state.thread_messages[thread.id]
     assert guide.id == prompt["guide_message_id"]
     assert prompt["guide_pinned"] and guide.pinned
-    assert "paste it as a message in this thread" in guide.embeds[0].description
+    assert "Copy with **Share**, then paste here" in guide.embeds[0].description
     assert "https://timeguessr.com" in guide.embeds[0].description
+    assert "`!dailyhelp`" in guide.embeds[0].description
+    assert guide.embeds[0].footer.text is None
     guide.pin.assert_awaited_once()
     monkeypatch.setattr("daily_games.bot.current_daily_puzzle", AsyncMock(return_value=1262))
     monkeypatch.setattr("daily_games.bot.next_reset", AsyncMock(return_value=None))
@@ -245,6 +262,29 @@ async def test_thread_opens_with_one_pinned_guide_and_edits_it_in_the_morning(
     assert f"<#{prompt['thread_id']}>" in parent_message.embeds[0].description
     parent_message.edit.assert_awaited_once()
     guide.edit.assert_awaited_once()
+    thread.send.assert_awaited_once()
+
+
+async def test_restart_shortens_an_existing_pinned_guide_in_place(thread_server, store, config):
+    store.set_result_mode(config.guild_id, DAY, "thread", actor_id=1)
+    bot = thread_server.bot
+    now = datetime(2026, 11, 13, 0, tzinfo=UTC)
+    await bot.publish_thread_prompt_locked(config, DAY, now)
+    prompt = store.prompt(config.guild_id, DAY)
+    thread = thread_server.state.threads[prompt["thread_id"]]
+    (guide,) = thread_server.state.thread_messages[thread.id]
+    guide.embeds = [
+        discord.Embed(title="Play today", description="Old layout").set_footer(
+            text=f"daily-games-links:{config.guild_id}:{DAY}"
+        )
+    ]
+    store.mark_prompt_flag(config.guild_id, DAY, "morning_updated")
+    bot.checked_thread_guides.clear()
+    await bot.publish_thread_prompt_locked(config, DAY, now + timedelta(hours=9))
+    await bot.publish_thread_prompt_locked(config, DAY, now + timedelta(hours=9, minutes=1))
+    assert "`!dailyhelp`" in guide.embeds[0].description
+    guide.edit.assert_awaited_once()
+    guide.pin.assert_awaited_once()
     thread.send.assert_awaited_once()
 
 
@@ -287,8 +327,11 @@ async def test_compact_mode_keeps_final_board_and_morning_links_in_threads(
     )
     parent_message = thread_server.state.messages[prompt["message_id"]]
     assert "Monats-Top-3" in parent_message.embeds[0].description
-    assert "Tagesrätsel spielen" not in parent_message.embeds[0].description
-    assert "Tagesrätsel spielen" in thread.send.await_args.kwargs["embed"].description
+    assert "https://timeguessr.com" not in parent_message.embeds[0].description
+    guide = thread.send.await_args.kwargs["embed"]
+    assert "**[TimeGuessr](" in guide.description
+    assert "Mit **Teilen** kopieren und hier posten" in guide.description
+    assert "`!dailyhelp`" in guide.description
     assert store.prompt(cfg.guild_id, DAY)["header_updated"] == 1
     assert store.prompt(cfg.guild_id, DAY)["morning_updated"] == 1
     store.freeze(cfg.guild_id, DAY, cfg.output_channel_id, make_snapshot([], DAY, cfg))
